@@ -35,7 +35,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "query",
         "internal",
         { machineDocId: string },
-        {
+        null | {
           _creationTime: number;
           _id: string;
           allowedSkills: Array<string>;
@@ -49,10 +49,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           region: string;
           serviceId: string;
           serviceKey: string;
-          status: "deleted" | "error" | "provisioning" | "running" | "stopped";
+          status: "provisioning" | "running" | "stopped" | "error" | "deleted";
           tenantId: string;
           userId: string;
-        } | null,
+        },
         Name
       >;
       listAgentMachinesByTenant: FunctionReference<
@@ -73,7 +73,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           region: string;
           serviceId: string;
           serviceKey: string;
-          status: "deleted" | "error" | "provisioning" | "running" | "stopped";
+          status: "provisioning" | "running" | "stopped" | "error" | "deleted";
           tenantId: string;
           userId: string;
         }>,
@@ -90,6 +90,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           flyAppName: string;
           image?: string;
           memoryMB?: number;
+          openclawGatewayToken?: string;
           region?: string;
           serviceId?: string;
           serviceKey?: string;

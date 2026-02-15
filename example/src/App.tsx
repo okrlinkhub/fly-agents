@@ -1,6 +1,7 @@
 import "./App.css";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { Id } from "../convex/_generated/dataModel";
 import { useState } from "react";
 
 // Fake blog posts (not in database)
@@ -26,7 +27,7 @@ const blogPosts = [
 function BlogPostComments({ postId }: { postId: string }) {
   const comments = useQuery(api.example.list, { targetId: postId });
   const addComment = useMutation(api.example.add);
-  const translateComment = useAction(api.example.translateComment);
+  const translateComment = useMutation(api.example.translateComment);
   const [commentText, setCommentText] = useState("");
 
   const handleAddComment = () => {
@@ -36,7 +37,7 @@ function BlogPostComments({ postId }: { postId: string }) {
     }
   };
 
-  const handleTranslateComment = async (commentId: string) => {
+  const handleTranslateComment = async (commentId: Id<"comments">) => {
     await translateComment({ commentId });
   };
 
@@ -64,7 +65,7 @@ function BlogPostComments({ postId }: { postId: string }) {
         <button onClick={handleAddComment}>Add Comment</button>
       </div>
       <ul style={{ textAlign: "left", listStyle: "none", padding: 0 }}>
-        {comments?.map((comment) => (
+        {comments?.map((comment: { _id: Id<"comments">; text: string; translatedText?: string }) => (
           <li
             key={comment._id}
             style={{

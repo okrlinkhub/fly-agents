@@ -64,6 +64,7 @@ export function exposeApi(
         tenantId: v.string(),
         flyApiToken: v.string(),
         flyAppName: v.string(),
+        openclawGatewayToken: v.optional(v.string()),
       },
       handler: async (ctx, args) => {
         await options.auth(ctx, {

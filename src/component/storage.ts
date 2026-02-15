@@ -1,5 +1,3 @@
-"use node";
-
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server.js";
 import schema from "./schema.js";

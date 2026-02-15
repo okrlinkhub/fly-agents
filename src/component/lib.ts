@@ -1,5 +1,3 @@
-"use node";
-
 import { v } from "convex/values";
 import { action, mutation, query } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
@@ -97,6 +95,7 @@ export const provisionAgentMachine = action({
     bridgeUrl: v.optional(v.string()),
     serviceId: v.optional(v.string()),
     serviceKey: v.optional(v.string()),
+    openclawGatewayToken: v.optional(v.string()),
     appKey: v.optional(v.string()),
     allowedSkills: v.optional(v.array(v.string())),
   },
@@ -114,6 +113,10 @@ export const provisionAgentMachine = action({
     const bridgeUrl = envOrThrow("AGENT_BRIDGE_URL", args.bridgeUrl);
     const serviceId = envOrThrow("OPENCLAW_SERVICE_ID", args.serviceId);
     const serviceKey = envOrThrow("OPENCLAW_SERVICE_KEY", args.serviceKey);
+    const openclawGatewayToken = envOrThrow(
+      "OPENCLAW_GATEWAY_TOKEN",
+      args.openclawGatewayToken,
+    );
     const appKey = args.appKey?.trim() || "linkhub-w4";
     const memoryMB = args.memoryMB ?? 512;
     const region = args.region ?? "iad";
@@ -165,6 +168,7 @@ export const provisionAgentMachine = action({
               AGENT_BRIDGE_URL: bridgeUrl,
               OPENCLAW_SERVICE_ID: serviceId,
               OPENCLAW_SERVICE_KEY: serviceKey,
+              OPENCLAW_GATEWAY_TOKEN: openclawGatewayToken,
               OPENCLAW_APP_KEY: appKey,
               ALLOWED_SKILLS_JSON: JSON.stringify(allowedSkills),
             },

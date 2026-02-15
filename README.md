@@ -12,6 +12,13 @@ The component is focused on:
 - propagation of runtime environment (bridge URL, service credentials, skill
   whitelist).
 
+Required runtime values for OpenClaw provisioning:
+
+- `AGENT_BRIDGE_URL`
+- `OPENCLAW_SERVICE_ID`
+- `OPENCLAW_SERVICE_KEY`
+- `OPENCLAW_GATEWAY_TOKEN`
+
 ## Installation
 
 ```sh
@@ -55,6 +62,7 @@ export const provision = action({
     tenantId: v.string(),
     flyApiToken: v.string(),
     flyAppName: v.string(),
+    openclawGatewayToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.runAction(components.flyAgents.lib.provisionAgentMachine, args);
