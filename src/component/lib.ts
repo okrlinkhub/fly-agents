@@ -121,6 +121,11 @@ export const provisionAgentMachine = action({
     const memoryMB = args.memoryMB ?? 512;
     const region = args.region ?? "iad";
     const image = args.image ?? "registry.fly.io/linkhub-agents:openclaw-okr-v1";
+    const safeUserSlug = args.userId
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_")
+      .slice(0, 10);
+    const volumeName = `agent_${safeUserSlug}_${Date.now().toString(36)}`.slice(0, 30);
 
     const machineDocId: Id<"agentMachines"> = await ctx.runMutation(
       internal.storage.insertMachineRecord,
@@ -144,7 +149,7 @@ export const provisionAgentMachine = action({
         token: args.flyApiToken,
         method: "POST",
         body: {
-          name: `agent-${args.userId}-${Date.now()}`,
+          name: volumeName,
           region,
           size_gb: 1,
         },

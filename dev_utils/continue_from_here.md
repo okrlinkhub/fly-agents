@@ -5,6 +5,16 @@
 ### Completato
 - `fly-agents` ripulito dal template `comments/translate`.
 - API lifecycle implementate in `fly-agents` (provision/start/stop/deprovision/list/get/update skills).
+- Provisioning aggiornato per passare il token auth gateway:
+  - aggiunto arg opzionale `openclawGatewayToken` in `src/component/lib.ts`;
+  - fallback su env server-side `OPENCLAW_GATEWAY_TOKEN`;
+  - inoltro su macchina Fly in `env.OPENCLAW_GATEWAY_TOKEN`.
+- API pubblica aggiornata per propagare il nuovo argomento:
+  - `src/client/index.ts` (`provisionAgentMachine`);
+  - `example/convex/example.ts` (`provisionAgent`).
+- Corretto naming volume Fly in provisioning:
+  - ora solo `lowercase alphanumeric + _`, max 30;
+  - evita errore Fly su nome volume non valido.
 - `openclaw-okr-image` aggiornato:
   - `Dockerfile` usa `ghcr.io/openclaw/openclaw:latest`.
   - install runtime Node.
@@ -22,6 +32,14 @@
   - bootstrap automatico config minima `/data/openclaw/config.json` con `gateway.mode=local`.
 - Build immagine locale riuscita: `linkhub-agents:openclaw-okr-v1`.
 - Smoke test script standalone (bypass entrypoint) riuscito.
+- Gateway avviato con token: OK (log: listening on ws://0.0.0.0:3000).
+- Convex env impostate su deployment dev:
+  - `AGENT_BRIDGE_URL`
+  - `OPENCLAW_SERVICE_ID`
+  - `OPENCLAW_SERVICE_KEY`
+  - `OPENCLAW_GATEWAY_TOKEN`
+  - `OPENCLAW_APP_KEY`
+- App Fly verificata: `linkhub-agents` esiste, owner `linkhub`, non ancora lanciata con machine funzionante.
 
 ### Verifiche bridge host (`linkhub-w4`)
 - Route bridge attive:
@@ -31,47 +49,104 @@
 
 ## Blocco corrente
 
-Errore in avvio gateway:
+Il blocco `gateway mode local requires auth` e' stato risolto con `OPENCLAW_GATEWAY_TOKEN`.
 
-- `gateway mode local requires auth`
-- Serve impostare auth gateway con token/password.
+Nuovo blocco attuale:
+- provisioning Fly via API fallisce su immagine non trovata:
+  - `MANIFEST_UNKNOWN`
+  - `manifest unknown`
+  - `unknown tag=openclaw-okr-v1`
+- in pratica il tag `registry.fly.io/linkhub-agents:openclaw-okr-v1` non risulta pubblicato correttamente sul registry Fly.
 
-In pratica la CLI richiede una di queste:
-- `OPENCLAW_GATEWAY_TOKEN` (consigliato),
-- oppure flag `--token`,
-- oppure password mode.
+Nota operativa:
+- i push Docker/Fly partono e caricano molti layer, ma restano in retry su pochi layer e non pubblicano il manifest finale.
 
 ## Cosa fare alla ripartenza (ordine operativo)
 
-### 1) Avvio gateway con token (sblocca il blocco attuale)
-Usare un token di test robusto (staging):
+Shortcut:
+- disponibile script `dev_utils/resume.sh` per rilanciare rapidamente publish + provisioning + logs.
+- uso:
+  - `bash dev_utils/resume.sh`
+  - `bash dev_utils/resume.sh --publish-only`
+  - `bash dev_utils/resume.sh --skip-publish`
+
+### 1) Sbloccare il publish immagine su Fly Registry (blocco principale)
+
+Verifiche rapide:
 
 ```bash
-docker run --rm -it \
-  -p 3000:3000 \
-  -e AGENT_BRIDGE_URL="https://woozy-retriever-951.convex.site" \
-  -e OPENCLAW_SERVICE_ID="openclaw-prod" \
-  -e OPENCLAW_SERVICE_KEY="<SERVICE_KEY>" \
-  -e OPENCLAW_GATEWAY_BIND="lan" \
-  -e OPENCLAW_GATEWAY_PORT="3000" \
-  -e OPENCLAW_GATEWAY_TOKEN="<RANDOM_LONG_TOKEN>" \
-  linkhub-agents:openclaw-okr-v1
+fly auth whoami
+fly status -a linkhub-agents
+docker image ls | rg 'linkhub-agents|openclaw-okr-v1'
 ```
 
-Atteso: gateway parte senza errore auth.
+Push esplicito (prima scelta):
 
-### 2) Validare config bootstrap sul volume
+```bash
+fly auth docker
+docker tag linkhub-agents:openclaw-okr-v1 registry.fly.io/linkhub-agents:openclaw-okr-v1
+docker push registry.fly.io/linkhub-agents:openclaw-okr-v1
+```
+
+Se resta bloccato su retry layer:
+- rilanciare `docker push` subito (spesso completa al secondo tentativo),
+- in alternativa cambiare tag (es. `openclaw-okr-v2`) e ritentare,
+- verificare anche da rete diversa/VPN off (possibile problema trasporto layer).
+
+Controllo risultato atteso:
+- il provisioning non deve piu' restituire `manifest unknown`.
+
+### 2) Provisioning macchina Fly via Convex (una volta pubblicato il tag)
+
+```bash
+TOKEN=$(fly tokens create deploy -a linkhub-agents -x 24h -j | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);console.log(j.token || j.Token || j.access_token || '')});")
+
+npx convex run example:provisionAgent "{
+  \"userId\":\"user123\",
+  \"tenantId\":\"linkhub-w4\",
+  \"flyApiToken\":\"$TOKEN\",
+  \"flyAppName\":\"linkhub-agents\",
+  \"bridgeUrl\":\"https://determined-kudu-49.convex.site\",
+  \"serviceId\":\"openclaw-prod\",
+  \"serviceKey\":\"<SERVICE_KEY>\",
+  \"appKey\":\"linkhub-w4\",
+  \"openclawGatewayToken\":\"<GATEWAY_TOKEN>\",
+  \"image\":\"registry.fly.io/linkhub-agents:openclaw-okr-v1\"
+}"
+```
+
+Atteso:
+- output con `machineDocId`, `machineId`, `volumeId`.
+
+### 3) Validare startup OpenClaw sulla machine Fly
+
+```bash
+fly logs -a linkhub-agents
+```
+
+Atteso nei log:
+- gateway in ascolto,
+- nessun errore auth gateway.
+
+### 4) Validare config bootstrap sul volume
+
+Via SSH (opzionale ma utile):
+
+```bash
+fly ssh console -a linkhub-agents -s <machineId> -C 'cat /data/openclaw/config.json'
+```
+
 Controllare che esista:
 - `/data/openclaw/config.json`
 - con `gateway.mode=local`
 
-### 3) Smoke test skill standalone (bypass entrypoint)
+### 5) Smoke test skill standalone (bypass entrypoint)
 Questo resta il test più affidabile per la parte bridge:
 
 ```bash
 docker run --rm \
   --entrypoint node \
-  -e AGENT_BRIDGE_URL="https://woozy-retriever-951.convex.site" \
+  -e AGENT_BRIDGE_URL="https://determined-kudu-49.convex.site" \
   -e OPENCLAW_SERVICE_ID="openclaw-prod" \
   -e OPENCLAW_SERVICE_KEY="<SERVICE_KEY>" \
   -e OPENCLAW_APP_KEY="linkhub-w4" \
@@ -82,14 +157,14 @@ docker run --rm \
 
 Atteso: JSON aggregato con `user/objectives/initiatives`.
 
-### 4) Verificare bridge direttamente con curl
+### 6) Verificare bridge direttamente con curl
 
 ```bash
-curl -sS "https://woozy-retriever-951.convex.site/agent/functions"
+curl -sS "https://determined-kudu-49.convex.site/agent/functions"
 ```
 
 ```bash
-curl -sS -X POST "https://woozy-retriever-951.convex.site/agent/execute" \
+curl -sS -X POST "https://determined-kudu-49.convex.site/agent/execute" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Service-Id: openclaw-prod" \
   -H "X-Agent-Service-Key: <SERVICE_KEY>" \
@@ -98,13 +173,24 @@ curl -sS -X POST "https://woozy-retriever-951.convex.site/agent/execute" \
   -d '{"functionKey":"users.me","args":{}}'
 ```
 
-### 5) Procedere con test E2E Telegram
+### 7) Procedere con test E2E Telegram
 - Avviare machine Fly con immagine aggiornata e stesse env.
 - Inviare messaggio Telegram al bot.
 - Verificare:
   - log container OpenClaw,
   - log Convex bridge (`/agent/execute`),
   - risposta finale sul canale Telegram.
+
+### 8) Ridurre costo model (post-sblocco deploy)
+
+Osservazione:
+- nei log compare `agent model: anthropic/claude-opus-4-6` (default costoso).
+
+Azione:
+- impostare model piu' economico in config runtime OpenClaw (`/data/openclaw/config.json`) o tramite env supportata dall'immagine usata.
+- opzioni tipiche:
+  - `openai/gpt-4.1-mini`
+  - `anthropic/claude-3-5-haiku-latest`
 
 ## Nota su `.env.local`
 - Tenere solo variabili `KEY=VALUE`.

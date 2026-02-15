@@ -10,7 +10,15 @@ export const provisionAgent = action({
     tenantId: v.string(),
     flyApiToken: v.string(),
     flyAppName: v.string(),
+    image: v.optional(v.string()),
+    region: v.optional(v.string()),
+    memoryMB: v.optional(v.number()),
+    bridgeUrl: v.optional(v.string()),
+    serviceId: v.optional(v.string()),
+    serviceKey: v.optional(v.string()),
+    appKey: v.optional(v.string()),
     openclawGatewayToken: v.optional(v.string()),
+    allowedSkills: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     await getAuthUserId(ctx);
