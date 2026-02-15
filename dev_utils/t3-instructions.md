@@ -72,10 +72,12 @@ Requisiti script:
   - `OPENCLAW_SERVICE_ID`
   - `OPENCLAW_SERVICE_KEY`
   - `OPENCLAW_APP_KEY` (opzionale: se assente usare default hardcoded);
+  - `OPENCLAW_USER_JWT` (obbligatoria per i functionKey bridge con `authMode: user`);
 - headers richiesti verso bridge:
   - `X-Agent-Service-Id`
   - `X-Agent-Service-Key`
   - `X-Agent-App`
+  - `Authorization: Bearer <jwt>`
 - output:
   - solo JSON su `stdout` in successo;
   - JSON errore su `stderr` con `exit(1)` in failure.
@@ -84,6 +86,17 @@ Pattern errore obbligatorio:
 
 - se `res.ok === false`, includere body testuale:
   - `HTTP <status>: <body>`.
+
+Mapping reale `skill -> functionKey` (linkhub-w4):
+
+- `users.me`
+- `objectives.getAllForCurrentUser`
+- `initiatives.getAllForCurrentUser`
+- opzionale: `initiatives.getImpactDetails` se presente `OPENCLAW_INITIATIVE_ID`
+
+Nota:
+
+- non usare `getOkrContext` (inesistente in `linkhub-w4/agent-bridge.config.ts`).
 
 ## Docker/OpenClaw bootstrap
 
@@ -108,6 +121,7 @@ Requisiti build:
 Requisiti runtime:
 
 - validare env minime (`AGENT_BRIDGE_URL`, `OPENCLAW_SERVICE_ID`, `OPENCLAW_SERVICE_KEY`);
+- validare anche disponibilita JWT utente (`OPENCLAW_USER_JWT`) se si usano functionKey user-mode;
 - creare `/data/character.json` in modo idempotente;
 - rispettare `ALLOWED_SKILLS_JSON` (default `["linkhub-bridge"]`);
 - avviare OpenClaw senza processi secondari.
@@ -141,8 +155,9 @@ docker run --rm \
   -e OPENCLAW_SERVICE_ID=test \
   -e OPENCLAW_SERVICE_KEY=secret \
   -e OPENCLAW_APP_KEY=linkhub-w4 \
+  -e OPENCLAW_USER_JWT=<jwt-valido-convex> \
   <image> \
-  node /app/skills/linkhub-bridge/scripts/fetch_context.js "user123" "Ciao"
+  node /app/skills/linkhub-bridge/scripts/fetch_context.js "user123" "Ciao" "<jwt-valido-convex>"
 ```
 
 Esito atteso:
@@ -155,5 +170,6 @@ Esito atteso:
 
 - nessun riferimento a client npm bridge nel container;
 - skill nativa `linkhub-bridge` presente e funzionante;
+- script allineato a functionKey reali in `linkhub-w4/agent-bridge.config.ts`;
 - fly-agents limita `ALLOWED_SKILLS_JSON` a whitelist verificata;
 - provisioning/lifecycle macchine funzionante con stato persistito su Convex.
