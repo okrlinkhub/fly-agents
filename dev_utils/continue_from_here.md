@@ -240,3 +240,84 @@ Azione:
     - `fly logs -a linkhub-agents`
     - log bridge Convex su `/agent/execute`
     - risposta finale su Telegram.
+
+## Aggiornamento operativo (2026-02-16, sessione "macchina clean da zero")
+
+### Obiettivo della sessione
+Ricreare tutto da zero come primo onboarding utente, con nuova machine pulita su Fly, pairing Telegram, e chiusura test E2E.
+
+### Stato raggiunto (fatto)
+- Cleanup completo eseguito:
+  - deprovision di tutti i record Convex storici del tenant.
+  - `fly machine list -a linkhub-agents` -> nessuna machine residua.
+- Nuova immagine pubblicata via remote builder:
+  - `registry.fly.io/linkhub-agents:deployment-01KHJDP5H0ANGBZJTTJGZXRRB9`
+- Secret app-level impostato:
+  - `TELEGRAM_BOT_TOKEN` su app `linkhub-agents` (non solo su singola machine).
+- Nuova machine pulita creata via `example:provisionAgent`:
+  - `machineDocId`: `j5763gcz57w1s3gws2enthe3qd818w75`
+  - `machineId`: `683269df435328`
+  - `volumeId`: `vol_vpgnq9qx0p869xev`
+- Gateway e provider Telegram verificati nei log:
+  - `listening on ws://0.0.0.0:3000`
+  - `[telegram] [default] starting provider (@LH_MarcoBot)`
+- Pairing request trovata su volume:
+  - `/data/openclaw/state/credentials/telegram-pairing.json` conteneva il code `5YTM9KFX`.
+- Approvazione manuale riuscita (workaround):
+  - popolato allowlist: `/data/openclaw/state/credentials/telegram-default-allowFrom.json`
+  - `allowFrom` contiene `8246761447`.
+- Hardening runtime applicato in codice:
+  - `src/component/lib.ts` aggiornato per nuove machine:
+    - `OPENCLAW_STATE_DIR=/data/openclaw/state`
+    - `OPENCLAW_CONFIG_PATH=/data/openclaw/config.json`
+    - `OPENCLAW_HOME=/data/openclaw`
+    - `autostop: false` (prima era `true`).
+- Hardening applicato anche alla machine corrente:
+  - `fly machine update ... --autostop=off --autostart`
+  - env persistenti sopra allineate sulla machine.
+
+### Problema strutturale emerso (pairing)
+- Il bot genera correttamente il pairing code e lo salva su `/data/openclaw/state/...`.
+- Il comando CLI `openclaw pairing approve` risulta incoerente/inaffidabile su questa immagine:
+  - spesso non vede pending request appena generate oppure va in hang.
+- Per non bloccare l'E2E, e' stato usato workaround manuale su file state (pairing rimosso + allowFrom aggiunto), con esito positivo.
+
+### Nuovo blocco attuale (ultimo)
+Il bot ora riceve i messaggi ma fallisce prima della risposta con errore provider:
+- `No API key found for provider "anthropic"`
+- path segnalato: `/data/openclaw/state/agents/main/agent/auth-profiles.json`
+
+Dettagli diagnostici gia' verificati:
+- `OPENAI_API_KEY` e' presente nell'env del processo `openclaw-gateway`.
+- config globale e' stata aggiornata con:
+  - `agents.defaults.model.primary = openai/gpt-5-mini`
+  - file: `/data/openclaw/config.json`
+- nonostante questo, nei log il gateway continua a mostrare:
+  - `agent model: anthropic/claude-opus-4-6`
+- quindi il runtime usa un override/session-state interno (non il default globale).
+
+### Cosa manca per chiudere l'E2E (prossima sessione)
+1) Forzare il model effettivo usato da `agent:main:main` su provider disponibile (`openai/*`) **oppure** fornire una credenziale anthropic valida.
+2) Inviare un messaggio Telegram reale e verificare risposta completa (non solo pairing).
+3) Validare che il bot risponda in modo stabile dopo restart machine (con autostop disabilitato).
+
+### Strategia consigliata alla ripartenza (piu' veloce)
+Approccio pragmatico: mantenere modello anthropic e aggiungere solo la chiave mancante per chiudere il test.
+- Opzione A (consigliata per chiudere E2E subito): impostare `ANTHROPIC_API_KEY` sulla machine/app e riprovare messaggio Telegram.
+- Opzione B: continuare a investigare override del model sessione (`agent:main:main`) per far prendere `openai/gpt-5-mini`.
+
+### Comandi rapidi di ripartenza
+```bash
+# stato machine
+fly machine status 683269df435328 -a linkhub-agents
+
+# log live (telegram + diagnostica)
+fly logs -a linkhub-agents --machine 683269df435328
+
+# env visibili dal processo gateway
+fly ssh console -a linkhub-agents -C 'sh -lc "PID=$(ps aux | awk \"/openclaw-gateway/{print \\$2; exit}\"); tr \"\\0\" \"\\n\" </proc/$PID/environ | sed -n \"/OPENCLAW_/p;/OPENAI_API_KEY/p;/ANTHROPIC_API_KEY/p\""'
+```
+
+### Nota importante
+- La base infrastrutturale ora e' sana (provisioning clean, gateway up, telegram provider up, pairing path corretto su volume).
+- Il blocco residuo non e' piu' Fly/provisioning/pairing, ma solo autenticazione provider modello al momento dell'inferenza agente.
