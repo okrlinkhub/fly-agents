@@ -118,7 +118,7 @@ export const provisionAgentMachine = action({
       args.openclawGatewayToken,
     );
     const appKey = args.appKey?.trim() || "linkhub-w4";
-    const memoryMB = args.memoryMB ?? 512;
+    const memoryMB = args.memoryMB ?? 2048;
     const region = args.region ?? "iad";
     const image = args.image ?? "registry.fly.io/linkhub-agents:openclaw-okr-v1";
     const safeUserSlug = args.userId

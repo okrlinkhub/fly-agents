@@ -62,6 +62,7 @@ require_cmd node
 APP_NAME="${FLY_APP_NAME:-linkhub-agents}"
 IMAGE_LOCAL="${IMAGE_LOCAL:-linkhub-agents:openclaw-okr-v1}"
 IMAGE_REMOTE="${IMAGE_REMOTE:-registry.fly.io/${APP_NAME}:openclaw-okr-v1}"
+MEMORY_MB="${MEMORY_MB:-2048}"
 
 USER_ID="${USER_ID:-user123}"
 TENANT_ID="${TENANT_ID:-linkhub-w4}"
@@ -122,6 +123,7 @@ if [[ "$RUN_PROVISION" == true ]]; then
     \"tenantId\":\"$TENANT_ID\",
     \"flyApiToken\":\"$FLY_DEPLOY_TOKEN\",
     \"flyAppName\":\"$APP_NAME\",
+    \"memoryMB\":$MEMORY_MB,
     \"bridgeUrl\":\"$BRIDGE_URL\",
     \"serviceId\":\"$SERVICE_ID\",
     \"serviceKey\":\"$SERVICE_KEY\",

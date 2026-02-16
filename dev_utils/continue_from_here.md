@@ -202,3 +202,41 @@ Azione:
   - `OPENCLAW_SERVICE_KEY`
   - `TELEGRAM_BOT_TOKEN`
 - Spostare i segreti in env management Fly/Convex e non committarli.
+
+## Aggiornamento operativo (2026-02-16)
+- Publish immagine sbloccato tramite remote builder Fly:
+  - `fly deploy --build-only --push --app linkhub-agents`
+  - tag pubblicato: `registry.fly.io/linkhub-agents:deployment-01KHJ8TTCFGBZX0Y9CYKAKP22M`
+  - digest usato in esecuzione: `sha256:86eabea28a2c38cbf9b572c246bebf4426f5cfd8aff93bfdd4bddc48951fb457`
+- Provisioning Convex riuscito con immagine remota:
+  - `machineDocId`: `j578q0ae8gy387px79ncrn035x818gp3`
+  - `machineId`: `3d8de391c4d618`
+  - `volumeId`: `vol_v3lxdl7eom67xqxv`
+- Root cause restart Fly Doctor identificata:
+  - non env mancanti (presenti nella machine config),
+  - ma OOM V8 (`Reached heap limit`) con `memory_mb=512`.
+- Mitigazione applicata sulla machine esistente:
+  - upgrade a `memory_mb=2048`,
+  - env `NODE_OPTIONS=--max-old-space-size=1536`.
+- Stato attuale verificato:
+  - machine `3d8de391c4d618` in `started`,
+  - gateway avviato (`listening on ws://0.0.0.0:3000`),
+  - bootstrap config presente su volume (`/data/openclaw/config.json` con `gateway.mode=local`),
+  - smoke test bridge OK:
+    - `GET /agent/functions` OK,
+    - `POST /agent/execute` (`users.me`) OK con `success:true`.
+
+### Hardening applicato nel codice
+- Default provisioning memoria aumentata:
+  - `src/component/lib.ts`: `memoryMB` default da `512` a `2048`.
+- Script di ripartenza aggiornato:
+  - `dev_utils/resume.sh` ora accetta `MEMORY_MB` (default `2048`) e lo passa a `example:provisionAgent`.
+
+### Prossimo passo immediato
+- Eseguire E2E Telegram:
+  - lasciare la machine attiva,
+  - inviare un messaggio reale al bot,
+  - monitorare in parallelo:
+    - `fly logs -a linkhub-agents`
+    - log bridge Convex su `/agent/execute`
+    - risposta finale su Telegram.
