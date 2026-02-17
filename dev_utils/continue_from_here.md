@@ -321,3 +321,100 @@ fly ssh console -a linkhub-agents -C 'sh -lc "PID=$(ps aux | awk \"/openclaw-gat
 ### Nota importante
 - La base infrastrutturale ora e' sana (provisioning clean, gateway up, telegram provider up, pairing path corretto su volume).
 - Il blocco residuo non e' piu' Fly/provisioning/pairing, ma solo autenticazione provider modello al momento dell'inferenza agente.
+
+## Aggiornamento operativo (2026-02-17, root cause startup gateway)
+
+### Problema osservato
+- Machine in stato `started`, processi `openclaw` e `openclaw-gateway` presenti, ma nessun bind su `:3000`.
+- Nei log mancava spesso la riga `[gateway] listening on ws://0.0.0.0:3000`.
+
+### Root cause confermata
+1) `OPENCLAW_GATEWAY_TOKEN` mancante/vuoto:
+- il gateway rifiuta esplicitamente il bind LAN.
+- log chiave:
+  - `Refusing to bind gateway to lan without auth.`
+  - `Set gateway.auth.token/password (or OPENCLAW_GATEWAY_TOKEN/OPENCLAW_GATEWAY_PASSWORD) ...`
+
+2) mismatch versione runtime/config su alcune immagini:
+- log ripetuto:
+  - `Config was last written by a newer OpenClaw (2026.2.15); current version is 2026.2.14.`
+- effetto: bootstrap rumoroso/instabile e restart frequenti.
+
+### Soluzione pratica validata
+- Ripristinare `OPENCLAW_GATEWAY_TOKEN` nella machine env e riavviare/aggiornare la machine.
+- Verificare poi nei log:
+  - `listening on ws://0.0.0.0:3000`
+  - provider telegram avviato.
+
+### Comandi utili (runbook)
+```bash
+# Verifica token env effettiva nel processo gateway
+fly ssh console -a linkhub-agents --machine <machineId> -C "sh -lc 'xargs -0 -n1 < /proc/\$(pgrep -f openclaw-gateway | head -n1)/environ | sed -n \"/OPENCLAW_GATEWAY_TOKEN/p\"'"
+
+# Reimposta token dalla .env.local e aggiorna macchina
+set -a && source .env.local && set +a
+fly machine update <machineId> -a linkhub-agents -e OPENCLAW_GATEWAY_TOKEN="$OPENCLAW_GATEWAY_TOKEN" --yes
+
+# Verifica startup gateway
+fly logs -a linkhub-agents --machine <machineId> --no-tail
+```
+
+### Nota architetturale
+- `OPENCLAW_GATEWAY_TOKEN` non e' opzionale quando il gateway binda in `lan` (default corrente).
+- Se manca, la machine puo' risultare "up" a livello Fly ma il servizio gateway non e' operativo.
+
+## Aggiornamento operativo (2026-02-17, stabilita' restart + pairing)
+
+### Sintomo
+- Comportamento non deterministico dopo restart/shutdown:
+  - a volte gateway in ascolto dopo ~60-120s,
+  - altre volte nessun bind su `:3000` anche con machine `started`.
+
+### Causa tecnica rilevata
+1) processi concorrenti da pairing (`openclaw.mjs pairing approve ...`) eseguiti in parallelo.
+2) lock/runtime temporanei stale sotto `/tmp/openclaw*`.
+3) assenza di gate di readiness forte: Fly puo' vedere VM avviata prima del bind reale del gateway.
+
+### Hardening applicato
+- `entrypoint.sh` aggiornato con:
+  - cleanup a ogni boot di `/tmp/openclaw` e `/tmp/openclaw-*`;
+  - watchdog readiness su porta gateway;
+  - fail-fast con exit non-zero se timeout startup superato (`OPENCLAW_STARTUP_TIMEOUT_SEC`, default `240`).
+- `fly.toml` e provisioning Convex allineati a check TCP con `grace_period=240s`.
+- policy restart macchina impostata su `always` nel provisioning.
+
+### Runbook pairing sicuro (obbligatorio)
+1) eseguire **un solo** comando pairing per volta.
+2) se pairing sembra bloccato, **non** lanciare retry concorrenti.
+3) fare restart macchina, attendere `[gateway] listening ...`, poi rilanciare un solo pairing.
+
+Comandi:
+```bash
+# Verifica gateway pronto
+fly logs -a linkhub-agents --machine <machineId> --no-tail
+
+# Pairing single-shot (solo quando gateway e' healthy)
+fly ssh console -a linkhub-agents --machine <machineId> -C "sh -lc 'cd /app && node ./openclaw.mjs pairing approve telegram <PAIRING_CODE>'"
+```
+
+## Nuovo ciclo cost-saving (idle backup + recreate)
+
+### Obiettivo
+- Spegnere automaticamente macchine inattive da >30 minuti.
+- Salvare backup metadata/state reference in Convex prima dello stop.
+- Ricreare macchina nuova da snapshot al richiamo dello stesso agente.
+
+### API introdotte
+- `touchAgentActivity(machineDocId)`:
+  - aggiorna heartbeat (`lastActivityAt`) a ogni traffico reale.
+- `createAgentSnapshot(machineDocId, flyApiToken, flyAppName)`:
+  - crea snapshot volume Fly e registra manifest su Convex.
+- `sweepIdleAgentsAndSnapshot(flyApiToken, flyAppName, idleMinutes?, limit?, dryRun?)`:
+  - trova running inattive, snapshotta, deprovisiona, marca `hibernated`.
+- `recreateAgentFromLatestSnapshot(...)`:
+  - se agente non e' running, provisiona macchina nuova tentando restore da ultimo snapshot.
+
+### Note operative
+- Per rollout graduale usare `dryRun=true` nello sweeper.
+- In caso snapshot non disponibile, il provisioning fallback crea volume pulito.
+- Conservare scheduling ogni 5 minuti lato orchestrazione/app caller.

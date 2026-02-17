@@ -14,10 +14,14 @@ export const provisionAgent = action({
     region: v.optional(v.string()),
     memoryMB: v.optional(v.number()),
     bridgeUrl: v.optional(v.string()),
+    llmApiKey: v.optional(v.string()),
+    llmModel: v.optional(v.string()),
+    telegramBotToken: v.optional(v.string()),
     serviceId: v.optional(v.string()),
     serviceKey: v.optional(v.string()),
     appKey: v.optional(v.string()),
-    openclawGatewayToken: v.optional(v.string()),
+    openclawGatewayToken: v.string(),
+    allowedSkillsJson: v.optional(v.string()),
     allowedSkills: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
@@ -43,6 +47,37 @@ export const updateSkills = mutation({
     return await ctx.runMutation(components.flyAgents.lib.updateAllowedSkills, {
       machineDocId: args.machineDocId as never,
       allowedSkills: args.allowedSkills,
+    });
+  },
+});
+
+export const createAgentSnapshot = action({
+  args: {
+    machineDocId: v.string(),
+    flyApiToken: v.string(),
+    flyAppName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await getAuthUserId(ctx);
+    return await ctx.runAction((components.flyAgents.lib as any).createAgentSnapshot, {
+      machineDocId: args.machineDocId as never,
+      flyApiToken: args.flyApiToken,
+      flyAppName: args.flyAppName,
+    });
+  },
+});
+
+export const getLatestAgentSnapshot = query({
+  args: {
+    tenantId: v.string(),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await getAuthUserId(ctx);
+    const agentKey = `${args.tenantId}:${args.userId}`;
+    const flyAgentsComponent = components.flyAgents as any;
+    return await ctx.runQuery(flyAgentsComponent.storage.getLatestSnapshotByAgentKey, {
+      agentKey,
     });
   },
 });

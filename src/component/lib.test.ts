@@ -40,4 +40,40 @@ describe("component lib", () => {
     const updated = await t.query(api.lib.getAgentMachine, { machineDocId });
     expect(updated?.allowedSkills).toEqual(["linkhub-bridge", "calendar-helper"]);
   });
+
+  test("touch activity removes machine from idle candidates", async () => {
+    const t = initConvexTest();
+    const now = Date.now();
+    const machineDocId = await t.mutation(internal.storage.insertMachineRecord, {
+      userId: "user2",
+      tenantId: "tenant-2",
+      status: "running",
+      allowedSkills: ["linkhub-bridge"],
+      memoryMB: 1024,
+      appKey: "linkhub-w4",
+      bridgeUrl: "https://linkhub-w4.convex.site",
+      serviceId: "svc-2",
+      serviceKey: "secret-2",
+      region: "iad",
+      lastActivityAt: now - 40 * 60_000,
+      lifecycleMode: "running",
+    });
+    await t.mutation(internal.storage.patchMachineRecord, {
+      machineDocId,
+      machineId: "machine-1",
+      flyVolumeId: "vol-1",
+    });
+
+    const staleBefore = await t.query(internal.storage.listStaleRunningMachines, {
+      cutoffMs: now - 30 * 60_000,
+    });
+    expect(staleBefore.map((m) => m._id)).toContain(machineDocId);
+
+    await t.mutation(api.lib.touchAgentActivity, { machineDocId });
+
+    const staleAfter = await t.query(internal.storage.listStaleRunningMachines, {
+      cutoffMs: now - 30 * 60_000,
+    });
+    expect(staleAfter.map((m) => m._id)).not.toContain(machineDocId);
+  });
 });

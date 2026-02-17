@@ -24,6 +24,13 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     lib: {
+      createAgentSnapshot: FunctionReference<
+        "action",
+        "internal",
+        { flyApiToken: string; flyAppName: string; machineDocId: string },
+        { flyVolumeSnapshotId?: string; snapshotId: string },
+        Name
+      >;
       deprovisionAgentMachine: FunctionReference<
         "action",
         "internal",
@@ -42,14 +49,23 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           appKey: string;
           bridgeUrl: string;
           flyVolumeId?: string;
+          lastActivityAt?: number;
           lastError?: string;
           lastWakeAt?: number;
+          latestSnapshotId?: string;
+          lifecycleMode?: "running" | "hibernated";
           machineId?: string;
           memoryMB: number;
           region: string;
           serviceId: string;
           serviceKey: string;
-          status: "provisioning" | "running" | "stopped" | "error" | "deleted";
+          status:
+            | "provisioning"
+            | "running"
+            | "stopped"
+            | "hibernated"
+            | "error"
+            | "deleted";
           tenantId: string;
           userId: string;
         },
@@ -66,14 +82,23 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           appKey: string;
           bridgeUrl: string;
           flyVolumeId?: string;
+          lastActivityAt?: number;
           lastError?: string;
           lastWakeAt?: number;
+          latestSnapshotId?: string;
+          lifecycleMode?: "running" | "hibernated";
           machineId?: string;
           memoryMB: number;
           region: string;
           serviceId: string;
           serviceKey: string;
-          status: "provisioning" | "running" | "stopped" | "error" | "deleted";
+          status:
+            | "provisioning"
+            | "running"
+            | "stopped"
+            | "hibernated"
+            | "error"
+            | "deleted";
           tenantId: string;
           userId: string;
         }>,
@@ -84,16 +109,46 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {
           allowedSkills?: Array<string>;
+          allowedSkillsJson?: string;
           appKey?: string;
           bridgeUrl?: string;
           flyApiToken: string;
           flyAppName: string;
           image?: string;
+          llmApiKey?: string;
+          llmModel?: string;
           memoryMB?: number;
-          openclawGatewayToken?: string;
+          openclawGatewayToken: string;
+          region?: string;
+          restoreFromLatestSnapshot?: boolean;
+          serviceId?: string;
+          serviceKey?: string;
+          telegramBotToken?: string;
+          tenantId: string;
+          userId: string;
+        },
+        { machineDocId: string; machineId: string; volumeId: string },
+        Name
+      >;
+      recreateAgentFromLatestSnapshot: FunctionReference<
+        "action",
+        "internal",
+        {
+          allowedSkills?: Array<string>;
+          allowedSkillsJson?: string;
+          appKey?: string;
+          bridgeUrl?: string;
+          flyApiToken: string;
+          flyAppName: string;
+          image?: string;
+          llmApiKey?: string;
+          llmModel?: string;
+          memoryMB?: number;
+          openclawGatewayToken: string;
           region?: string;
           serviceId?: string;
           serviceKey?: string;
+          telegramBotToken?: string;
           tenantId: string;
           userId: string;
         },
@@ -111,6 +166,26 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "action",
         "internal",
         { flyApiToken: string; flyAppName: string; machineDocId: string },
+        null,
+        Name
+      >;
+      sweepIdleAgentsAndSnapshot: FunctionReference<
+        "action",
+        "internal",
+        {
+          dryRun?: boolean;
+          flyApiToken: string;
+          flyAppName: string;
+          idleMinutes?: number;
+          limit?: number;
+        },
+        { errors: number; hibernated: number; scanned: number },
+        Name
+      >;
+      touchAgentActivity: FunctionReference<
+        "mutation",
+        "internal",
+        { machineDocId: string },
         null,
         Name
       >;
