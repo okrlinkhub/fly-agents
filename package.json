@@ -1,10 +1,13 @@
 {
   "name": "@okrlinkhub/fly-agents",
   "description": "A fly agents component for Convex.",
-  "repository": "github:https://github.com/okrlinkhub/fly-agents",
-  "homepage": "https://github.com/https://github.com/okrlinkhub/fly-agents#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/okrlinkhub/fly-agents.git"
+  },
+  "homepage": "https://github.com/okrlinkhub/fly-agents#readme",
   "bugs": {
-    "url": "https://github.com/https://github.com/okrlinkhub/fly-agents/issues"
+    "url": "https://github.com/okrlinkhub/fly-agents/issues"
   },
   "version": "0.1.0",
   "license": "Apache-2.0",
