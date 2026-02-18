@@ -515,8 +515,8 @@ async function provisionMachine(ctx: any, args: any): Promise<{
   const allowedSkills =
     parseAllowedSkillsJson(args.allowedSkillsJson) ?? args.allowedSkills ?? ["linkhub-bridge"];
   const bridgeUrl = requiredArg("bridgeUrl", args.bridgeUrl);
-  const llmApiKey = requiredArg("llmApiKey", args.llmApiKey);
-  const openaiApiKey = requiredValue("openaiApiKey", args.openaiApiKey, llmApiKey);
+  const llmApiKey = requiredValue("llmApiKey or openaiApiKey", args.llmApiKey, args.openaiApiKey);
+  const openaiApiKey = requiredValue("openaiApiKey or llmApiKey", args.openaiApiKey, llmApiKey);
   const llmModel = defaultedValue(args.llmModel, DEFAULT_LLM_MODEL);
   assertAllowedModel(llmModel);
   const telegramBotToken = requiredArg("telegramBotToken", args.telegramBotToken);
