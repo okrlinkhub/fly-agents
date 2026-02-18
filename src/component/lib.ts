@@ -52,15 +52,33 @@ function agentKeyFor(userId: string, tenantId: string) {
   return `${tenantId}:${userId}`;
 }
 
-function envOrThrow(name: string, fallback?: string) {
-  const value =
-    fallback ??
-    (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
-      ?.env?.[name];
-  if (!value || !value.trim()) {
-    throw new Error(`Missing required value: ${name}`);
+function requiredArg(name: string, value?: string) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new Error(`Missing required argument: ${name}`);
   }
-  return value.trim();
+  return normalized;
+}
+
+function requiredValue(name: string, value?: string, fallback?: string) {
+  const normalizedValue = value?.trim();
+  if (normalizedValue) {
+    return normalizedValue;
+  }
+  const normalizedFallback = fallback?.trim();
+  if (normalizedFallback) {
+    return normalizedFallback;
+  }
+  throw new Error(`Missing required value: ${name}`);
+}
+
+function optionalValue(value?: string) {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function defaultedValue(value: string | undefined, fallback: string) {
+  return optionalValue(value) ?? fallback.trim();
 }
 
 function parseAllowedSkillsJson(raw?: string): Array<string> | null {
@@ -93,7 +111,6 @@ function assertAllowedModel(model: string) {
 const DEFAULT_LLM_MODEL = "openai/gpt-4.1-mini";
 const MODEL_SET_RETRY_ATTEMPTS = 30;
 const MODEL_SET_RETRY_DELAY_MS = 5_000;
-const AGENT_SECRETS_ENCRYPTION_KEY_ENV = "AGENT_SECRETS_ENCRYPTION_KEY";
 
 type SecretPayload = {
   flyApiToken?: string;
@@ -103,7 +120,7 @@ type SecretPayload = {
   openclawGatewayToken?: string;
 };
 
-let cachedCryptoKey: Promise<CryptoKey> | null = null;
+const cachedCryptoKeys = new Map<string, Promise<CryptoKey>>();
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -134,19 +151,22 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-async function getSecretsCryptoKey() {
-  if (!cachedCryptoKey) {
-    const secret = envOrThrow(AGENT_SECRETS_ENCRYPTION_KEY_ENV);
-    cachedCryptoKey = (async () => {
-      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-      return await crypto.subtle.importKey("raw", hash, "AES-GCM", false, ["encrypt", "decrypt"]);
-    })();
+async function getSecretsCryptoKey(secretsEncryptionKey: string) {
+  const secret = requiredArg("secretsEncryptionKey", secretsEncryptionKey);
+  const cached = cachedCryptoKeys.get(secret);
+  if (cached) {
+    return await cached;
   }
-  return await cachedCryptoKey;
+  const keyPromise = (async () => {
+    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+    return await crypto.subtle.importKey("raw", hash, "AES-GCM", false, ["encrypt", "decrypt"]);
+  })();
+  cachedCryptoKeys.set(secret, keyPromise);
+  return await keyPromise;
 }
 
-async function encryptSecret(plaintext: string) {
-  const key = await getSecretsCryptoKey();
+async function encryptSecret(plaintext: string, secretsEncryptionKey: string) {
+  const key = await getSecretsCryptoKey(secretsEncryptionKey);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
@@ -156,8 +176,8 @@ async function encryptSecret(plaintext: string) {
   return `${toBase64(iv)}.${toBase64(new Uint8Array(encrypted))}`;
 }
 
-async function decryptSecret(ciphertext: string) {
-  const key = await getSecretsCryptoKey();
+async function decryptSecret(ciphertext: string, secretsEncryptionKey: string) {
+  const key = await getSecretsCryptoKey(secretsEncryptionKey);
   const parts = ciphertext.split(".");
   if (parts.length !== 2) {
     throw new Error("Invalid encrypted secret format");
@@ -221,7 +241,11 @@ async function forceDefaultModelOnMachine(args: {
   throw new Error(`Unable to force model ${args.llmModel} on machine ${args.machineId}: ${message}`);
 }
 
-async function getSecretsForAgent(ctx: any, args: { tenantId: string; userId: string }) {
+async function getSecretsForAgent(ctx: any, args: {
+  tenantId: string;
+  userId: string;
+  secretsEncryptionKey: string;
+}) {
   const agentKey = agentKeyFor(args.userId, args.tenantId);
   const record: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
   if (!record) {
@@ -229,19 +253,25 @@ async function getSecretsForAgent(ctx: any, args: { tenantId: string; userId: st
   }
   const decrypted: SecretPayload = {};
   if (record.flyApiTokenEnc) {
-    decrypted.flyApiToken = await decryptSecret(record.flyApiTokenEnc);
+    decrypted.flyApiToken = await decryptSecret(record.flyApiTokenEnc, args.secretsEncryptionKey);
   }
   if (record.llmApiKeyEnc) {
-    decrypted.llmApiKey = await decryptSecret(record.llmApiKeyEnc);
+    decrypted.llmApiKey = await decryptSecret(record.llmApiKeyEnc, args.secretsEncryptionKey);
   }
   if (record.openaiApiKeyEnc) {
-    decrypted.openaiApiKey = await decryptSecret(record.openaiApiKeyEnc);
+    decrypted.openaiApiKey = await decryptSecret(record.openaiApiKeyEnc, args.secretsEncryptionKey);
   }
   if (record.telegramBotTokenEnc) {
-    decrypted.telegramBotToken = await decryptSecret(record.telegramBotTokenEnc);
+    decrypted.telegramBotToken = await decryptSecret(
+      record.telegramBotTokenEnc,
+      args.secretsEncryptionKey,
+    );
   }
   if (record.openclawGatewayTokenEnc) {
-    decrypted.openclawGatewayToken = await decryptSecret(record.openclawGatewayTokenEnc);
+    decrypted.openclawGatewayToken = await decryptSecret(
+      record.openclawGatewayTokenEnc,
+      args.secretsEncryptionKey,
+    );
   }
   return decrypted;
 }
@@ -326,6 +356,7 @@ export const upsertAgentSecrets = mutation({
   args: {
     tenantId: v.string(),
     userId: v.string(),
+    secretsEncryptionKey: v.string(),
     flyApiToken: v.optional(v.string()),
     llmApiKey: v.optional(v.string()),
     openaiApiKey: v.optional(v.string()),
@@ -347,21 +378,23 @@ export const upsertAgentSecrets = mutation({
 
     const flyApiTokenEnc =
       next.flyApiToken !== undefined
-        ? await encryptSecret(next.flyApiToken)
+        ? await encryptSecret(next.flyApiToken, args.secretsEncryptionKey)
         : existing?.flyApiTokenEnc;
     const llmApiKeyEnc =
-      next.llmApiKey !== undefined ? await encryptSecret(next.llmApiKey) : existing?.llmApiKeyEnc;
+      next.llmApiKey !== undefined
+        ? await encryptSecret(next.llmApiKey, args.secretsEncryptionKey)
+        : existing?.llmApiKeyEnc;
     const openaiApiKeyEnc =
       next.openaiApiKey !== undefined
-        ? await encryptSecret(next.openaiApiKey)
+        ? await encryptSecret(next.openaiApiKey, args.secretsEncryptionKey)
         : existing?.openaiApiKeyEnc;
     const telegramBotTokenEnc =
       next.telegramBotToken !== undefined
-        ? await encryptSecret(next.telegramBotToken)
+        ? await encryptSecret(next.telegramBotToken, args.secretsEncryptionKey)
         : existing?.telegramBotTokenEnc;
     const openclawGatewayTokenEnc =
       next.openclawGatewayToken !== undefined
-        ? await encryptSecret(next.openclawGatewayToken)
+        ? await encryptSecret(next.openclawGatewayToken, args.secretsEncryptionKey)
         : existing?.openclawGatewayTokenEnc;
 
     const updatedAt = Date.now();
@@ -481,15 +514,15 @@ async function provisionMachine(ctx: any, args: any): Promise<{
 }> {
   const allowedSkills =
     parseAllowedSkillsJson(args.allowedSkillsJson) ?? args.allowedSkills ?? ["linkhub-bridge"];
-  const bridgeUrl = envOrThrow("AGENT_BRIDGE_URL", args.bridgeUrl);
-  const llmApiKey = envOrThrow("LLM_API_KEY", args.llmApiKey);
-  const openaiApiKey = envOrThrow("OPENAI_API_KEY", args.openaiApiKey ?? llmApiKey);
-  const llmModel = envOrThrow("LLM_MODEL", args.llmModel?.trim() || DEFAULT_LLM_MODEL);
+  const bridgeUrl = requiredArg("bridgeUrl", args.bridgeUrl);
+  const llmApiKey = requiredArg("llmApiKey", args.llmApiKey);
+  const openaiApiKey = requiredValue("openaiApiKey", args.openaiApiKey, llmApiKey);
+  const llmModel = defaultedValue(args.llmModel, DEFAULT_LLM_MODEL);
   assertAllowedModel(llmModel);
-  const telegramBotToken = envOrThrow("TELEGRAM_BOT_TOKEN", args.telegramBotToken);
-  const serviceId = envOrThrow("OPENCLAW_SERVICE_ID", args.serviceId);
-  const serviceKey = envOrThrow("OPENCLAW_SERVICE_KEY", args.serviceKey);
-  const openclawGatewayToken = envOrThrow("OPENCLAW_GATEWAY_TOKEN", args.openclawGatewayToken);
+  const telegramBotToken = requiredArg("telegramBotToken", args.telegramBotToken);
+  const serviceId = requiredArg("serviceId", args.serviceId);
+  const serviceKey = requiredArg("serviceKey", args.serviceKey);
+  const openclawGatewayToken = requiredArg("openclawGatewayToken", args.openclawGatewayToken);
   const appKey = args.appKey?.trim() || "linkhub-w4";
   const memoryMB = args.memoryMB ?? 2048;
   const region = args.region ?? "iad";
@@ -810,6 +843,8 @@ export const approveTelegramPairingWithStoredSecrets = action({
     machineDocId: v.id("agentMachines"),
     flyAppName: v.string(),
     telegramPairingCode: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyApiToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -822,8 +857,9 @@ export const approveTelegramPairingWithStoredSecrets = action({
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: machine.tenantId,
       userId: machine.userId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
     });
-    const flyApiToken = secrets?.flyApiToken;
+    const flyApiToken = optionalValue(secrets?.flyApiToken) ?? optionalValue(args.flyApiToken);
     if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
@@ -848,10 +884,16 @@ export const provisionAgentMachineWithStoredSecrets = action({
     userId: v.string(),
     tenantId: v.string(),
     flyAppName: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyApiToken: v.optional(v.string()),
     image: v.optional(v.string()),
     region: v.optional(v.string()),
     memoryMB: v.optional(v.number()),
     bridgeUrl: v.optional(v.string()),
+    llmApiKey: v.optional(v.string()),
+    openaiApiKey: v.optional(v.string()),
+    telegramBotToken: v.optional(v.string()),
+    openclawGatewayToken: v.optional(v.string()),
     llmModel: v.optional(v.string()),
     serviceId: v.optional(v.string()),
     serviceKey: v.optional(v.string()),
@@ -869,17 +911,20 @@ export const provisionAgentMachineWithStoredSecrets = action({
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: args.tenantId,
       userId: args.userId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
     });
-    if (!secrets?.flyApiToken) {
+    const flyApiToken = optionalValue(secrets?.flyApiToken) ?? optionalValue(args.flyApiToken);
+    if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
     return await provisionMachine(ctx, {
       ...args,
-      flyApiToken: secrets.flyApiToken,
-      llmApiKey: secrets.llmApiKey,
-      openaiApiKey: secrets.openaiApiKey,
-      telegramBotToken: secrets.telegramBotToken,
-      openclawGatewayToken: secrets.openclawGatewayToken,
+      flyApiToken,
+      llmApiKey: optionalValue(secrets?.llmApiKey) ?? optionalValue(args.llmApiKey),
+      openaiApiKey: optionalValue(secrets?.openaiApiKey) ?? optionalValue(args.openaiApiKey),
+      telegramBotToken: optionalValue(secrets?.telegramBotToken) ?? optionalValue(args.telegramBotToken),
+      openclawGatewayToken:
+        optionalValue(secrets?.openclawGatewayToken) ?? optionalValue(args.openclawGatewayToken),
     });
   },
 });
@@ -889,10 +934,16 @@ export const recreateAgentFromLatestSnapshotWithStoredSecrets = action({
     userId: v.string(),
     tenantId: v.string(),
     flyAppName: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyApiToken: v.optional(v.string()),
     image: v.optional(v.string()),
     region: v.optional(v.string()),
     memoryMB: v.optional(v.number()),
     bridgeUrl: v.optional(v.string()),
+    llmApiKey: v.optional(v.string()),
+    openaiApiKey: v.optional(v.string()),
+    telegramBotToken: v.optional(v.string()),
+    openclawGatewayToken: v.optional(v.string()),
     llmModel: v.optional(v.string()),
     serviceId: v.optional(v.string()),
     serviceKey: v.optional(v.string()),
@@ -909,8 +960,10 @@ export const recreateAgentFromLatestSnapshotWithStoredSecrets = action({
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: args.tenantId,
       userId: args.userId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
     });
-    if (!secrets?.flyApiToken) {
+    const flyApiToken = optionalValue(secrets?.flyApiToken) ?? optionalValue(args.flyApiToken);
+    if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
     const latest: any = await ctx.runQuery(internal.storage.getLatestMachineByUserTenant, {
@@ -926,11 +979,12 @@ export const recreateAgentFromLatestSnapshotWithStoredSecrets = action({
     }
     return await provisionMachine(ctx, {
       ...args,
-      flyApiToken: secrets.flyApiToken,
-      llmApiKey: secrets.llmApiKey,
-      openaiApiKey: secrets.openaiApiKey,
-      telegramBotToken: secrets.telegramBotToken,
-      openclawGatewayToken: secrets.openclawGatewayToken,
+      flyApiToken,
+      llmApiKey: optionalValue(secrets?.llmApiKey) ?? optionalValue(args.llmApiKey),
+      openaiApiKey: optionalValue(secrets?.openaiApiKey) ?? optionalValue(args.openaiApiKey),
+      telegramBotToken: optionalValue(secrets?.telegramBotToken) ?? optionalValue(args.telegramBotToken),
+      openclawGatewayToken:
+        optionalValue(secrets?.openclawGatewayToken) ?? optionalValue(args.openclawGatewayToken),
       restoreFromLatestSnapshot: true,
     });
   },
@@ -1043,6 +1097,8 @@ export const startAgentMachineWithStoredSecrets = action({
   args: {
     machineDocId: v.id("agentMachines"),
     flyAppName: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyApiToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -1055,8 +1111,10 @@ export const startAgentMachineWithStoredSecrets = action({
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: machine.tenantId,
       userId: machine.userId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
     });
-    if (!secrets?.flyApiToken) {
+    const flyApiToken = optionalValue(secrets?.flyApiToken) ?? optionalValue(args.flyApiToken);
+    if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
     if (!machine?.machineId) {
@@ -1064,7 +1122,7 @@ export const startAgentMachineWithStoredSecrets = action({
     }
     await flyRequest({
       endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}/start`,
-      token: secrets.flyApiToken,
+      token: flyApiToken,
       method: "POST",
     });
     await ctx.runMutation(internal.storage.patchMachineRecord, {
@@ -1082,6 +1140,8 @@ export const stopAgentMachineWithStoredSecrets = action({
   args: {
     machineDocId: v.id("agentMachines"),
     flyAppName: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyApiToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -1094,8 +1154,10 @@ export const stopAgentMachineWithStoredSecrets = action({
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: machine.tenantId,
       userId: machine.userId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
     });
-    if (!secrets?.flyApiToken) {
+    const flyApiToken = optionalValue(secrets?.flyApiToken) ?? optionalValue(args.flyApiToken);
+    if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
     if (!machine?.machineId) {
@@ -1103,7 +1165,7 @@ export const stopAgentMachineWithStoredSecrets = action({
     }
     await flyRequest({
       endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}/stop`,
-      token: secrets.flyApiToken,
+      token: flyApiToken,
       method: "POST",
     });
     await ctx.runMutation(internal.storage.patchMachineRecord, {
@@ -1119,6 +1181,8 @@ export const deprovisionAgentMachineWithStoredSecrets = action({
   args: {
     machineDocId: v.id("agentMachines"),
     flyAppName: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyApiToken: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -1131,21 +1195,23 @@ export const deprovisionAgentMachineWithStoredSecrets = action({
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: machine.tenantId,
       userId: machine.userId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
     });
-    if (!secrets?.flyApiToken) {
+    const flyApiToken = optionalValue(secrets?.flyApiToken) ?? optionalValue(args.flyApiToken);
+    if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
     if (machine.machineId) {
       await flyRequest({
         endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}`,
-        token: secrets.flyApiToken,
+        token: flyApiToken,
         method: "DELETE",
       });
     }
     if (machine.flyVolumeId) {
       await flyRequest({
         endpoint: `/apps/${args.flyAppName}/volumes/${machine.flyVolumeId}`,
-        token: secrets.flyApiToken,
+        token: flyApiToken,
         method: "DELETE",
       });
     }
@@ -1161,6 +1227,8 @@ export const createAgentSnapshotWithStoredSecrets = action({
   args: {
     machineDocId: v.id("agentMachines"),
     flyAppName: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyApiToken: v.optional(v.string()),
   },
   returns: v.object({
     snapshotId: v.id("agentSnapshots"),
@@ -1176,13 +1244,15 @@ export const createAgentSnapshotWithStoredSecrets = action({
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: machine.tenantId,
       userId: machine.userId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
     });
-    if (!secrets?.flyApiToken) {
+    const flyApiToken = optionalValue(secrets?.flyApiToken) ?? optionalValue(args.flyApiToken);
+    if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
     return await createBackupSnapshotForMachine(ctx, {
       machineDocId: args.machineDocId,
-      flyApiToken: secrets.flyApiToken,
+      flyApiToken,
       flyAppName: args.flyAppName,
     });
   },

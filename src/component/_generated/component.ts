@@ -40,8 +40,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "action",
         "internal",
         {
+          flyApiToken?: string;
           flyAppName: string;
           machineDocId: string;
+          secretsEncryptionKey: string;
           telegramPairingCode: string;
         },
         null,
@@ -64,7 +66,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       createAgentSnapshotWithStoredSecrets: FunctionReference<
         "action",
         "internal",
-        { flyAppName: string; machineDocId: string },
+        {
+          flyApiToken?: string;
+          flyAppName: string;
+          machineDocId: string;
+          secretsEncryptionKey: string;
+        },
         { flyVolumeSnapshotId?: string; snapshotId: string },
         Name
       >;
@@ -78,7 +85,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       deprovisionAgentMachineWithStoredSecrets: FunctionReference<
         "action",
         "internal",
-        { flyAppName: string; machineDocId: string },
+        {
+          flyApiToken?: string;
+          flyAppName: string;
+          machineDocId: string;
+          secretsEncryptionKey: string;
+        },
         null,
         Name
       >;
@@ -199,14 +211,20 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           allowedSkillsJson?: string;
           appKey?: string;
           bridgeUrl?: string;
+          flyApiToken?: string;
           flyAppName: string;
           image?: string;
+          llmApiKey?: string;
           llmModel?: string;
           memoryMB?: number;
+          openaiApiKey?: string;
+          openclawGatewayToken?: string;
           region?: string;
           restoreFromLatestSnapshot?: boolean;
+          secretsEncryptionKey: string;
           serviceId?: string;
           serviceKey?: string;
+          telegramBotToken?: string;
           tenantId: string;
           userId: string;
         },
@@ -247,13 +265,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           allowedSkillsJson?: string;
           appKey?: string;
           bridgeUrl?: string;
+          flyApiToken?: string;
           flyAppName: string;
           image?: string;
+          llmApiKey?: string;
           llmModel?: string;
           memoryMB?: number;
+          openaiApiKey?: string;
+          openclawGatewayToken?: string;
           region?: string;
+          secretsEncryptionKey: string;
           serviceId?: string;
           serviceKey?: string;
+          telegramBotToken?: string;
           tenantId: string;
           userId: string;
         },
@@ -270,7 +294,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       startAgentMachineWithStoredSecrets: FunctionReference<
         "action",
         "internal",
-        { flyAppName: string; machineDocId: string },
+        {
+          flyApiToken?: string;
+          flyAppName: string;
+          machineDocId: string;
+          secretsEncryptionKey: string;
+        },
         null,
         Name
       >;
@@ -284,7 +313,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       stopAgentMachineWithStoredSecrets: FunctionReference<
         "action",
         "internal",
-        { flyAppName: string; machineDocId: string },
+        {
+          flyApiToken?: string;
+          flyAppName: string;
+          machineDocId: string;
+          secretsEncryptionKey: string;
+        },
         null,
         Name
       >;
@@ -310,6 +344,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           llmApiKey?: string;
           openaiApiKey?: string;
           openclawGatewayToken?: string;
+          secretsEncryptionKey: string;
           telegramBotToken?: string;
           tenantId: string;
           userId: string;
