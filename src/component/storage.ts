@@ -16,6 +16,11 @@ const machineRecordValidator = schema.tables.agentMachines.validator.extend({
   _creationTime: v.number(),
 });
 
+const secretRecordValidator = schema.tables.agentVmSecrets.validator.extend({
+  _id: v.id("agentVmSecrets"),
+  _creationTime: v.number(),
+});
+
 export const getMachineRecord = internalQuery({
   args: { machineDocId: v.id("agentMachines") },
   returns: v.union(v.null(), machineRecordValidator),
@@ -70,30 +75,6 @@ const snapshotStatusValidator = v.union(
   v.literal("restored"),
   v.literal("failed"),
 );
-
-export const listStaleRunningMachines = internalQuery({
-  args: {
-    cutoffMs: v.number(),
-    limit: v.optional(v.number()),
-  },
-  returns: v.array(machineRecordValidator),
-  handler: async (ctx, args) => {
-    const all = await ctx.db.query("agentMachines").collect();
-    const stale = all
-      .filter(
-        (m) =>
-          m.status === "running" &&
-          (m.lastActivityAt ?? m.lastWakeAt ?? 0) <= args.cutoffMs &&
-          !!m.machineId &&
-          !!m.flyVolumeId,
-      )
-      .sort((a, b) => (a.lastActivityAt ?? a.lastWakeAt ?? 0) - (b.lastActivityAt ?? b.lastWakeAt ?? 0));
-    if (!args.limit || args.limit <= 0) {
-      return stale;
-    }
-    return stale.slice(0, args.limit);
-  },
-});
 
 export const getLatestMachineByUserTenant = internalQuery({
   args: {
@@ -208,6 +189,63 @@ export const patchAgentSnapshot = internalMutation({
   handler: async (ctx, args) => {
     const { snapshotId, ...updates } = args;
     await ctx.db.patch(snapshotId, updates);
+    return null;
+  },
+});
+
+export const getAgentSecretsRecord = internalQuery({
+  args: {
+    agentKey: v.string(),
+  },
+  returns: v.union(v.null(), secretRecordValidator),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("agentVmSecrets")
+      .withIndex("by_agentKey", (q) => q.eq("agentKey", args.agentKey))
+      .unique();
+  },
+});
+
+export const upsertAgentSecretsRecord = internalMutation({
+  args: {
+    agentKey: v.string(),
+    tenantId: v.string(),
+    userId: v.string(),
+    flyApiTokenEnc: v.optional(v.string()),
+    llmApiKeyEnc: v.optional(v.string()),
+    openaiApiKeyEnc: v.optional(v.string()),
+    telegramBotTokenEnc: v.optional(v.string()),
+    openclawGatewayTokenEnc: v.optional(v.string()),
+    updatedAt: v.number(),
+  },
+  returns: v.id("agentVmSecrets"),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("agentVmSecrets")
+      .withIndex("by_agentKey", (q) => q.eq("agentKey", args.agentKey))
+      .unique();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, args);
+      return existing._id;
+    }
+    return await ctx.db.insert("agentVmSecrets", args);
+  },
+});
+
+export const clearAgentSecretsRecord = internalMutation({
+  args: {
+    agentKey: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("agentVmSecrets")
+      .withIndex("by_agentKey", (q) => q.eq("agentKey", args.agentKey))
+      .unique();
+    if (existing) {
+      await ctx.db.delete(existing._id);
+    }
     return null;
   },
 });

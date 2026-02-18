@@ -58,4 +58,18 @@ export default defineSchema({
     ),
     lastError: v.optional(v.string()),
   }).index("by_agentKey_createdAt", ["agentKey"]),
+  agentVmSecrets: defineTable({
+    agentKey: v.string(),
+    tenantId: v.string(),
+    userId: v.string(),
+    flyApiTokenEnc: v.optional(v.string()),
+    llmApiKeyEnc: v.optional(v.string()),
+    openaiApiKeyEnc: v.optional(v.string()),
+    telegramBotTokenEnc: v.optional(v.string()),
+    openclawGatewayTokenEnc: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_agentKey", ["agentKey"])
+    .index("by_tenantId", ["tenantId"])
+    .index("by_userId_and_tenantId", ["userId", "tenantId"]),
 });

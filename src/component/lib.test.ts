@@ -41,7 +41,7 @@ describe("component lib", () => {
     expect(updated?.allowedSkills).toEqual(["linkhub-bridge", "calendar-helper"]);
   });
 
-  test("touch activity removes machine from idle candidates", async () => {
+  test("touch activity updates machine timestamps", async () => {
     const t = initConvexTest();
     const now = Date.now();
     const machineDocId = await t.mutation(internal.storage.insertMachineRecord, {
@@ -60,20 +60,17 @@ describe("component lib", () => {
     });
     await t.mutation(internal.storage.patchMachineRecord, {
       machineDocId,
-      machineId: "machine-1",
-      flyVolumeId: "vol-1",
+      lastWakeAt: now - 45 * 60_000,
     });
 
-    const staleBefore = await t.query(internal.storage.listStaleRunningMachines, {
-      cutoffMs: now - 30 * 60_000,
-    });
-    expect(staleBefore.map((m) => m._id)).toContain(machineDocId);
+    const beforeTouch = await t.query(api.lib.getAgentMachine, { machineDocId });
+    expect(beforeTouch?.lastActivityAt).toBe(now - 40 * 60_000);
+    expect(beforeTouch?.lastWakeAt).toBe(now - 45 * 60_000);
 
     await t.mutation(api.lib.touchAgentActivity, { machineDocId });
 
-    const staleAfter = await t.query(internal.storage.listStaleRunningMachines, {
-      cutoffMs: now - 30 * 60_000,
-    });
-    expect(staleAfter.map((m) => m._id)).not.toContain(machineDocId);
+    const afterTouch = await t.query(api.lib.getAgentMachine, { machineDocId });
+    expect(afterTouch?.lastActivityAt).toBe(now);
+    expect(afterTouch?.lastWakeAt).toBe(now);
   });
 });

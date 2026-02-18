@@ -25,6 +25,7 @@ Required runtime values for OpenClaw provisioning:
 - `OPENCLAW_SERVICE_ID`
 - `OPENCLAW_SERVICE_KEY`
 - `OPENCLAW_GATEWAY_TOKEN`
+- `AGENT_SECRETS_ENCRYPTION_KEY` (required if using stored-secrets APIs)
 
 ## Installation
 
@@ -55,10 +56,23 @@ Main component functions (`components.flyAgents.lib.*`):
 - `deprovisionAgentMachine`
 - `touchAgentActivity`
 - `createAgentSnapshot`
-- `sweepIdleAgentsAndSnapshot`
 - `listAgentMachinesByTenant`
 - `getAgentMachine`
 - `updateAllowedSkills`
+- `upsertAgentSecrets`
+- `getAgentSecretsMeta`
+- `clearAgentSecrets`
+- `provisionAgentMachineWithStoredSecrets`
+- `recreateAgentFromLatestSnapshotWithStoredSecrets`
+- `startAgentMachineWithStoredSecrets`
+- `stopAgentMachineWithStoredSecrets`
+- `deprovisionAgentMachineWithStoredSecrets`
+- `createAgentSnapshotWithStoredSecrets`
+- `approveTelegramPairing`
+- `approveTelegramPairingWithStoredSecrets`
+
+Agent secrets are stored in component table `agentVmSecrets` and encrypted
+at rest using `AGENT_SECRETS_ENCRYPTION_KEY`.
 
 ## Example
 
@@ -102,6 +116,16 @@ When the user sends a Telegram pairing code, approve it on the target machine:
 
 ```sh
 fly ssh console -a "<fly-app-name>" --machine "<machine-id>" -C "sh -lc 'cd /app && node ./openclaw.mjs pairing approve telegram <PAIRING_CODE>'"
+```
+
+Or via component action:
+
+```ts
+await ctx.runAction(components.flyAgents.lib.approveTelegramPairingWithStoredSecrets, {
+  machineDocId,
+  flyAppName: "your-fly-app",
+  telegramPairingCode: "<PAIRING_CODE>",
+});
 ```
 
 Notes:
@@ -166,33 +190,20 @@ Current hardened image behavior:
 - Uses TCP readiness checks with `grace_period=240s` to reduce false positives
   (`VM started` while gateway is still booting).
 
-## Idle Backup + Recreate flow
+## Lifecycle model
 
-To reduce active-machine costs while preserving state, the component supports:
+The component does not perform automatic idle shutdowns. Machines stay active
+until an explicit lifecycle action is called.
 
-1. heartbeat activity update (`touchAgentActivity`);
-2. idle sweep after 30m (`sweepIdleAgentsAndSnapshot`);
-3. snapshot metadata persisted in Convex (`agentSnapshots`);
-4. recreate from latest snapshot (`recreateAgentFromLatestSnapshot`).
+Use manual actions when needed:
 
-### Recommended operational sequence
+- `startAgentMachine` / `startAgentMachineWithStoredSecrets`
+- `stopAgentMachine` / `stopAgentMachineWithStoredSecrets`
+- `deprovisionAgentMachine` / `deprovisionAgentMachineWithStoredSecrets`
 
-```sh
-# 1) Update activity when agent receives traffic
-components.flyAgents.lib.touchAgentActivity
-
-# 2) Run periodic sweeper (every 5 minutes)
-components.flyAgents.lib.sweepIdleAgentsAndSnapshot
-
-# 3) When same agent returns, recreate from latest snapshot
-components.flyAgents.lib.recreateAgentFromLatestSnapshot
-```
-
-### Idle sweep defaults
-
-- inactivity threshold: `30` minutes (configurable per call via `idleMinutes`);
-- pre-stop backup: `openclaw-state-plus-manifest`;
-- safe rollout option: `dryRun=true` to inspect candidates without stopping.
+Snapshots remain available as explicit operations (`createAgentSnapshot`,
+`recreateAgentFromLatestSnapshot`) and are not tied to an automatic idle
+sweeper.
 
 ### Gateway auth requirement (critical)
 

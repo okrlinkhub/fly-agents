@@ -23,7 +23,8 @@ export function exposeApi(
         | { type: "deprovision"; machineDocId: string }
         | { type: "touchActivity"; machineDocId: string }
         | { type: "snapshot"; machineDocId: string }
-        | { type: "sweep" },
+        | { type: "pairTelegram"; machineDocId: string }
+        | { type: "secrets"; tenantId: string },
     ) => Promise<string>;
   },
 ) {
@@ -60,6 +61,50 @@ export function exposeApi(
           machineDocId: args.machineDocId as never,
           allowedSkills: args.allowedSkills,
         });
+      },
+    }),
+    getAgentSecretsMeta: queryGeneric({
+      args: {
+        tenantId: v.string(),
+        userId: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "secrets",
+          tenantId: args.tenantId,
+        });
+        return await ctx.runQuery((component.lib as any).getAgentSecretsMeta, args);
+      },
+    }),
+    upsertAgentSecrets: mutationGeneric({
+      args: {
+        tenantId: v.string(),
+        userId: v.string(),
+        flyApiToken: v.optional(v.string()),
+        llmApiKey: v.optional(v.string()),
+        openaiApiKey: v.optional(v.string()),
+        telegramBotToken: v.optional(v.string()),
+        openclawGatewayToken: v.optional(v.string()),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "secrets",
+          tenantId: args.tenantId,
+        });
+        return await ctx.runMutation((component.lib as any).upsertAgentSecrets, args);
+      },
+    }),
+    clearAgentSecrets: mutationGeneric({
+      args: {
+        tenantId: v.string(),
+        userId: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "secrets",
+          tenantId: args.tenantId,
+        });
+        return await ctx.runMutation((component.lib as any).clearAgentSecrets, args);
       },
     }),
     touchAgentActivity: mutationGeneric({
@@ -105,6 +150,31 @@ export function exposeApi(
         return await ctx.runAction(component.lib.provisionAgentMachine, args);
       },
     }),
+    provisionAgentMachineWithStoredSecrets: actionGeneric({
+      args: {
+        userId: v.string(),
+        tenantId: v.string(),
+        flyAppName: v.string(),
+        image: v.optional(v.string()),
+        region: v.optional(v.string()),
+        memoryMB: v.optional(v.number()),
+        bridgeUrl: v.optional(v.string()),
+        llmModel: v.optional(v.string()),
+        serviceId: v.optional(v.string()),
+        serviceKey: v.optional(v.string()),
+        appKey: v.optional(v.string()),
+        allowedSkillsJson: v.optional(v.string()),
+        allowedSkills: v.optional(v.array(v.string())),
+        restoreFromLatestSnapshot: v.optional(v.boolean()),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "provision",
+          tenantId: args.tenantId,
+        });
+        return await ctx.runAction((component.lib as any).provisionAgentMachineWithStoredSecrets, args);
+      },
+    }),
     recreateAgentFromLatestSnapshot: actionGeneric({
       args: {
         userId: v.string(),
@@ -133,6 +203,33 @@ export function exposeApi(
         return await ctx.runAction((component.lib as any).recreateAgentFromLatestSnapshot, args);
       },
     }),
+    recreateAgentFromLatestSnapshotWithStoredSecrets: actionGeneric({
+      args: {
+        userId: v.string(),
+        tenantId: v.string(),
+        flyAppName: v.string(),
+        image: v.optional(v.string()),
+        region: v.optional(v.string()),
+        memoryMB: v.optional(v.number()),
+        bridgeUrl: v.optional(v.string()),
+        llmModel: v.optional(v.string()),
+        serviceId: v.optional(v.string()),
+        serviceKey: v.optional(v.string()),
+        appKey: v.optional(v.string()),
+        allowedSkillsJson: v.optional(v.string()),
+        allowedSkills: v.optional(v.array(v.string())),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "recreate",
+          tenantId: args.tenantId,
+        });
+        return await ctx.runAction(
+          (component.lib as any).recreateAgentFromLatestSnapshotWithStoredSecrets,
+          args,
+        );
+      },
+    }),
     createAgentSnapshot: actionGeneric({
       args: {
         machineDocId: v.string(),
@@ -148,17 +245,17 @@ export function exposeApi(
         });
       },
     }),
-    sweepIdleAgentsAndSnapshot: actionGeneric({
+    createAgentSnapshotWithStoredSecrets: actionGeneric({
       args: {
-        flyApiToken: v.string(),
+        machineDocId: v.string(),
         flyAppName: v.string(),
-        idleMinutes: v.optional(v.number()),
-        limit: v.optional(v.number()),
-        dryRun: v.optional(v.boolean()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "sweep" });
-        return await ctx.runAction((component.lib as any).sweepIdleAgentsAndSnapshot, args);
+        await options.auth(ctx, { type: "snapshot", machineDocId: args.machineDocId });
+        return await ctx.runAction((component.lib as any).createAgentSnapshotWithStoredSecrets, {
+          machineDocId: args.machineDocId as never,
+          flyAppName: args.flyAppName,
+        });
       },
     }),
     startAgentMachine: actionGeneric({
@@ -172,6 +269,19 @@ export function exposeApi(
         return await ctx.runAction(component.lib.startAgentMachine, {
           machineDocId: args.machineDocId as never,
           flyApiToken: args.flyApiToken,
+          flyAppName: args.flyAppName,
+        });
+      },
+    }),
+    startAgentMachineWithStoredSecrets: actionGeneric({
+      args: {
+        machineDocId: v.string(),
+        flyAppName: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "start", machineDocId: args.machineDocId });
+        return await ctx.runAction((component.lib as any).startAgentMachineWithStoredSecrets, {
+          machineDocId: args.machineDocId as never,
           flyAppName: args.flyAppName,
         });
       },
@@ -191,6 +301,19 @@ export function exposeApi(
         });
       },
     }),
+    stopAgentMachineWithStoredSecrets: actionGeneric({
+      args: {
+        machineDocId: v.string(),
+        flyAppName: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "stop", machineDocId: args.machineDocId });
+        return await ctx.runAction((component.lib as any).stopAgentMachineWithStoredSecrets, {
+          machineDocId: args.machineDocId as never,
+          flyAppName: args.flyAppName,
+        });
+      },
+    }),
     deprovisionAgentMachine: actionGeneric({
       args: {
         machineDocId: v.string(),
@@ -206,6 +329,60 @@ export function exposeApi(
           machineDocId: args.machineDocId as never,
           flyApiToken: args.flyApiToken,
           flyAppName: args.flyAppName,
+        });
+      },
+    }),
+    deprovisionAgentMachineWithStoredSecrets: actionGeneric({
+      args: {
+        machineDocId: v.string(),
+        flyAppName: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "deprovision",
+          machineDocId: args.machineDocId,
+        });
+        return await ctx.runAction((component.lib as any).deprovisionAgentMachineWithStoredSecrets, {
+          machineDocId: args.machineDocId as never,
+          flyAppName: args.flyAppName,
+        });
+      },
+    }),
+    approveTelegramPairing: actionGeneric({
+      args: {
+        machineDocId: v.string(),
+        flyApiToken: v.string(),
+        flyAppName: v.string(),
+        telegramPairingCode: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "pairTelegram",
+          machineDocId: args.machineDocId,
+        });
+        return await ctx.runAction((component.lib as any).approveTelegramPairing, {
+          machineDocId: args.machineDocId as never,
+          flyApiToken: args.flyApiToken,
+          flyAppName: args.flyAppName,
+          telegramPairingCode: args.telegramPairingCode,
+        });
+      },
+    }),
+    approveTelegramPairingWithStoredSecrets: actionGeneric({
+      args: {
+        machineDocId: v.string(),
+        flyAppName: v.string(),
+        telegramPairingCode: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, {
+          type: "pairTelegram",
+          machineDocId: args.machineDocId,
+        });
+        return await ctx.runAction((component.lib as any).approveTelegramPairingWithStoredSecrets, {
+          machineDocId: args.machineDocId as never,
+          flyAppName: args.flyAppName,
+          telegramPairingCode: args.telegramPairingCode,
         });
       },
     }),

@@ -24,6 +24,36 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     lib: {
+      approveTelegramPairing: FunctionReference<
+        "action",
+        "internal",
+        {
+          flyApiToken: string;
+          flyAppName: string;
+          machineDocId: string;
+          telegramPairingCode: string;
+        },
+        null,
+        Name
+      >;
+      approveTelegramPairingWithStoredSecrets: FunctionReference<
+        "action",
+        "internal",
+        {
+          flyAppName: string;
+          machineDocId: string;
+          telegramPairingCode: string;
+        },
+        null,
+        Name
+      >;
+      clearAgentSecrets: FunctionReference<
+        "mutation",
+        "internal",
+        { tenantId: string; userId: string },
+        null,
+        Name
+      >;
       createAgentSnapshot: FunctionReference<
         "action",
         "internal",
@@ -31,10 +61,24 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         { flyVolumeSnapshotId?: string; snapshotId: string },
         Name
       >;
+      createAgentSnapshotWithStoredSecrets: FunctionReference<
+        "action",
+        "internal",
+        { flyAppName: string; machineDocId: string },
+        { flyVolumeSnapshotId?: string; snapshotId: string },
+        Name
+      >;
       deprovisionAgentMachine: FunctionReference<
         "action",
         "internal",
         { flyApiToken: string; flyAppName: string; machineDocId: string },
+        null,
+        Name
+      >;
+      deprovisionAgentMachineWithStoredSecrets: FunctionReference<
+        "action",
+        "internal",
+        { flyAppName: string; machineDocId: string },
         null,
         Name
       >;
@@ -67,6 +111,22 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "error"
             | "deleted";
           tenantId: string;
+          userId: string;
+        },
+        Name
+      >;
+      getAgentSecretsMeta: FunctionReference<
+        "query",
+        "internal",
+        { tenantId: string; userId: string },
+        null | {
+          hasFlyApiToken: boolean;
+          hasLlmApiKey: boolean;
+          hasOpenaiApiKey: boolean;
+          hasOpenclawGatewayToken: boolean;
+          hasTelegramBotToken: boolean;
+          tenantId: string;
+          updatedAt: number;
           userId: string;
         },
         Name
@@ -118,12 +178,35 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           llmApiKey?: string;
           llmModel?: string;
           memoryMB?: number;
+          openaiApiKey?: string;
           openclawGatewayToken: string;
           region?: string;
           restoreFromLatestSnapshot?: boolean;
           serviceId?: string;
           serviceKey?: string;
           telegramBotToken?: string;
+          tenantId: string;
+          userId: string;
+        },
+        { machineDocId: string; machineId: string; volumeId: string },
+        Name
+      >;
+      provisionAgentMachineWithStoredSecrets: FunctionReference<
+        "action",
+        "internal",
+        {
+          allowedSkills?: Array<string>;
+          allowedSkillsJson?: string;
+          appKey?: string;
+          bridgeUrl?: string;
+          flyAppName: string;
+          image?: string;
+          llmModel?: string;
+          memoryMB?: number;
+          region?: string;
+          restoreFromLatestSnapshot?: boolean;
+          serviceId?: string;
+          serviceKey?: string;
           tenantId: string;
           userId: string;
         },
@@ -144,11 +227,33 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           llmApiKey?: string;
           llmModel?: string;
           memoryMB?: number;
+          openaiApiKey?: string;
           openclawGatewayToken: string;
           region?: string;
           serviceId?: string;
           serviceKey?: string;
           telegramBotToken?: string;
+          tenantId: string;
+          userId: string;
+        },
+        { machineDocId: string; machineId: string; volumeId: string },
+        Name
+      >;
+      recreateAgentFromLatestSnapshotWithStoredSecrets: FunctionReference<
+        "action",
+        "internal",
+        {
+          allowedSkills?: Array<string>;
+          allowedSkillsJson?: string;
+          appKey?: string;
+          bridgeUrl?: string;
+          flyAppName: string;
+          image?: string;
+          llmModel?: string;
+          memoryMB?: number;
+          region?: string;
+          serviceId?: string;
+          serviceKey?: string;
           tenantId: string;
           userId: string;
         },
@@ -162,6 +267,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null,
         Name
       >;
+      startAgentMachineWithStoredSecrets: FunctionReference<
+        "action",
+        "internal",
+        { flyAppName: string; machineDocId: string },
+        null,
+        Name
+      >;
       stopAgentMachine: FunctionReference<
         "action",
         "internal",
@@ -169,17 +281,11 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null,
         Name
       >;
-      sweepIdleAgentsAndSnapshot: FunctionReference<
+      stopAgentMachineWithStoredSecrets: FunctionReference<
         "action",
         "internal",
-        {
-          dryRun?: boolean;
-          flyApiToken: string;
-          flyAppName: string;
-          idleMinutes?: number;
-          limit?: number;
-        },
-        { errors: number; hibernated: number; scanned: number },
+        { flyAppName: string; machineDocId: string },
+        null,
         Name
       >;
       touchAgentActivity: FunctionReference<
@@ -194,6 +300,30 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { allowedSkills: Array<string>; machineDocId: string },
         null,
+        Name
+      >;
+      upsertAgentSecrets: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          flyApiToken?: string;
+          llmApiKey?: string;
+          openaiApiKey?: string;
+          openclawGatewayToken?: string;
+          telegramBotToken?: string;
+          tenantId: string;
+          userId: string;
+        },
+        {
+          hasFlyApiToken: boolean;
+          hasLlmApiKey: boolean;
+          hasOpenaiApiKey: boolean;
+          hasOpenclawGatewayToken: boolean;
+          hasTelegramBotToken: boolean;
+          tenantId: string;
+          updatedAt: number;
+          userId: string;
+        },
         Name
       >;
     };

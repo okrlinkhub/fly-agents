@@ -9,6 +9,17 @@ const machineRecordValidator = schema.tables.agentMachines.validator.extend({
   _creationTime: v.number(),
 });
 
+const secretMetaValidator = v.object({
+  tenantId: v.string(),
+  userId: v.string(),
+  updatedAt: v.number(),
+  hasFlyApiToken: v.boolean(),
+  hasLlmApiKey: v.boolean(),
+  hasOpenaiApiKey: v.boolean(),
+  hasTelegramBotToken: v.boolean(),
+  hasOpenclawGatewayToken: v.boolean(),
+});
+
 type FlyRequestArgs = {
   endpoint: string;
   token: string;
@@ -82,6 +93,17 @@ function assertAllowedModel(model: string) {
 const DEFAULT_LLM_MODEL = "openai/gpt-4.1-mini";
 const MODEL_SET_RETRY_ATTEMPTS = 30;
 const MODEL_SET_RETRY_DELAY_MS = 5_000;
+const AGENT_SECRETS_ENCRYPTION_KEY_ENV = "AGENT_SECRETS_ENCRYPTION_KEY";
+
+type SecretPayload = {
+  flyApiToken?: string;
+  llmApiKey?: string;
+  openaiApiKey?: string;
+  telegramBotToken?: string;
+  openclawGatewayToken?: string;
+};
+
+let cachedCryptoKey: Promise<CryptoKey> | null = null;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -89,6 +111,70 @@ function sleep(ms: number) {
 
 function shellSingleQuote(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function fromBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function getSecretsCryptoKey() {
+  if (!cachedCryptoKey) {
+    const secret = envOrThrow(AGENT_SECRETS_ENCRYPTION_KEY_ENV);
+    cachedCryptoKey = (async () => {
+      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+      return await crypto.subtle.importKey("raw", hash, "AES-GCM", false, ["encrypt", "decrypt"]);
+    })();
+  }
+  return await cachedCryptoKey;
+}
+
+async function encryptSecret(plaintext: string) {
+  const key = await getSecretsCryptoKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(plaintext),
+  );
+  return `${toBase64(iv)}.${toBase64(new Uint8Array(encrypted))}`;
+}
+
+async function decryptSecret(ciphertext: string) {
+  const key = await getSecretsCryptoKey();
+  const [ivEncoded, payloadEncoded] = ciphertext.split(".");
+  if (!ivEncoded || !payloadEncoded) {
+    throw new Error("Invalid encrypted secret format");
+  }
+  const iv = fromBase64(ivEncoded);
+  const payload = fromBase64(payloadEncoded);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: toArrayBuffer(iv) },
+    key,
+    toArrayBuffer(payload),
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
+function normalizeOptionalSecret(value?: string | null) {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
 }
 
 async function forceDefaultModelOnMachine(args: {
@@ -129,6 +215,31 @@ async function forceDefaultModelOnMachine(args: {
   const message =
     lastError instanceof Error ? lastError.message : "unknown exec error while forcing model";
   throw new Error(`Unable to force model ${args.llmModel} on machine ${args.machineId}: ${message}`);
+}
+
+async function getSecretsForAgent(ctx: any, args: { tenantId: string; userId: string }) {
+  const agentKey = agentKeyFor(args.userId, args.tenantId);
+  const record: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
+  if (!record) {
+    return null;
+  }
+  const decrypted: SecretPayload = {};
+  if (record.flyApiTokenEnc) {
+    decrypted.flyApiToken = await decryptSecret(record.flyApiTokenEnc);
+  }
+  if (record.llmApiKeyEnc) {
+    decrypted.llmApiKey = await decryptSecret(record.llmApiKeyEnc);
+  }
+  if (record.openaiApiKeyEnc) {
+    decrypted.openaiApiKey = await decryptSecret(record.openaiApiKeyEnc);
+  }
+  if (record.telegramBotTokenEnc) {
+    decrypted.telegramBotToken = await decryptSecret(record.telegramBotTokenEnc);
+  }
+  if (record.openclawGatewayTokenEnc) {
+    decrypted.openclawGatewayToken = await decryptSecret(record.openclawGatewayTokenEnc);
+  }
+  return decrypted;
 }
 
 export const listAgentMachinesByTenant = query({
@@ -178,6 +289,112 @@ export const touchAgentActivity = mutation({
       lastActivityAt: now,
       lastWakeAt: now,
     });
+    return null;
+  },
+});
+
+export const getAgentSecretsMeta = query({
+  args: {
+    tenantId: v.string(),
+    userId: v.string(),
+  },
+  returns: v.union(v.null(), secretMetaValidator),
+  handler: async (ctx, args) => {
+    const agentKey = agentKeyFor(args.userId, args.tenantId);
+    const record: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
+    if (!record) {
+      return null;
+    }
+    return {
+      tenantId: record.tenantId,
+      userId: record.userId,
+      updatedAt: record.updatedAt,
+      hasFlyApiToken: Boolean(record.flyApiTokenEnc),
+      hasLlmApiKey: Boolean(record.llmApiKeyEnc),
+      hasOpenaiApiKey: Boolean(record.openaiApiKeyEnc),
+      hasTelegramBotToken: Boolean(record.telegramBotTokenEnc),
+      hasOpenclawGatewayToken: Boolean(record.openclawGatewayTokenEnc),
+    };
+  },
+});
+
+export const upsertAgentSecrets = mutation({
+  args: {
+    tenantId: v.string(),
+    userId: v.string(),
+    flyApiToken: v.optional(v.string()),
+    llmApiKey: v.optional(v.string()),
+    openaiApiKey: v.optional(v.string()),
+    telegramBotToken: v.optional(v.string()),
+    openclawGatewayToken: v.optional(v.string()),
+  },
+  returns: secretMetaValidator,
+  handler: async (ctx, args) => {
+    const agentKey = agentKeyFor(args.userId, args.tenantId);
+    const existing: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
+
+    const next = {
+      flyApiToken: normalizeOptionalSecret(args.flyApiToken),
+      llmApiKey: normalizeOptionalSecret(args.llmApiKey),
+      openaiApiKey: normalizeOptionalSecret(args.openaiApiKey),
+      telegramBotToken: normalizeOptionalSecret(args.telegramBotToken),
+      openclawGatewayToken: normalizeOptionalSecret(args.openclawGatewayToken),
+    };
+
+    const flyApiTokenEnc =
+      next.flyApiToken !== undefined
+        ? await encryptSecret(next.flyApiToken)
+        : existing?.flyApiTokenEnc;
+    const llmApiKeyEnc =
+      next.llmApiKey !== undefined ? await encryptSecret(next.llmApiKey) : existing?.llmApiKeyEnc;
+    const openaiApiKeyEnc =
+      next.openaiApiKey !== undefined
+        ? await encryptSecret(next.openaiApiKey)
+        : existing?.openaiApiKeyEnc;
+    const telegramBotTokenEnc =
+      next.telegramBotToken !== undefined
+        ? await encryptSecret(next.telegramBotToken)
+        : existing?.telegramBotTokenEnc;
+    const openclawGatewayTokenEnc =
+      next.openclawGatewayToken !== undefined
+        ? await encryptSecret(next.openclawGatewayToken)
+        : existing?.openclawGatewayTokenEnc;
+
+    const updatedAt = Date.now();
+    await ctx.runMutation(internal.storage.upsertAgentSecretsRecord, {
+      agentKey,
+      tenantId: args.tenantId,
+      userId: args.userId,
+      flyApiTokenEnc,
+      llmApiKeyEnc,
+      openaiApiKeyEnc,
+      telegramBotTokenEnc,
+      openclawGatewayTokenEnc,
+      updatedAt,
+    });
+
+    return {
+      tenantId: args.tenantId,
+      userId: args.userId,
+      updatedAt,
+      hasFlyApiToken: Boolean(flyApiTokenEnc),
+      hasLlmApiKey: Boolean(llmApiKeyEnc),
+      hasOpenaiApiKey: Boolean(openaiApiKeyEnc),
+      hasTelegramBotToken: Boolean(telegramBotTokenEnc),
+      hasOpenclawGatewayToken: Boolean(openclawGatewayTokenEnc),
+    };
+  },
+});
+
+export const clearAgentSecrets = mutation({
+  args: {
+    tenantId: v.string(),
+    userId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const agentKey = agentKeyFor(args.userId, args.tenantId);
+    await ctx.runMutation(internal.storage.clearAgentSecretsRecord, { agentKey });
     return null;
   },
 });
@@ -262,6 +479,7 @@ async function provisionMachine(ctx: any, args: any): Promise<{
     parseAllowedSkillsJson(args.allowedSkillsJson) ?? args.allowedSkills ?? ["linkhub-bridge"];
   const bridgeUrl = envOrThrow("AGENT_BRIDGE_URL", args.bridgeUrl);
   const llmApiKey = envOrThrow("LLM_API_KEY", args.llmApiKey);
+  const openaiApiKey = envOrThrow("OPENAI_API_KEY", args.openaiApiKey ?? llmApiKey);
   const llmModel = envOrThrow("LLM_MODEL", args.llmModel?.trim() || DEFAULT_LLM_MODEL);
   assertAllowedModel(llmModel);
   const telegramBotToken = envOrThrow("TELEGRAM_BOT_TOKEN", args.telegramBotToken);
@@ -354,6 +572,7 @@ async function provisionMachine(ctx: any, args: any): Promise<{
             TENANT_ID: args.tenantId,
             LLM_MODEL: llmModel,
             LLM_API_KEY: llmApiKey,
+            OPENAI_API_KEY: openaiApiKey,
             TELEGRAM_BOT_TOKEN: telegramBotToken,
             AGENT_BRIDGE_URL: bridgeUrl,
             OPENCLAW_SERVICE_ID: serviceId,
@@ -433,6 +652,7 @@ export const provisionAgentMachine = action({
     memoryMB: v.optional(v.number()),
     bridgeUrl: v.optional(v.string()),
     llmApiKey: v.optional(v.string()),
+    openaiApiKey: v.optional(v.string()),
     llmModel: v.optional(v.string()),
     telegramBotToken: v.optional(v.string()),
     serviceId: v.optional(v.string()),
@@ -475,83 +695,6 @@ export const createAgentSnapshot = action({
   },
 });
 
-export const sweepIdleAgentsAndSnapshot = action({
-  args: {
-    flyApiToken: v.string(),
-    flyAppName: v.string(),
-    idleMinutes: v.optional(v.number()),
-    limit: v.optional(v.number()),
-    dryRun: v.optional(v.boolean()),
-  },
-  returns: v.object({
-    scanned: v.number(),
-    hibernated: v.number(),
-    errors: v.number(),
-  }),
-  handler: async (ctx, args): Promise<{ scanned: number; hibernated: number; errors: number }> => {
-    const now = Date.now();
-    const idleMinutes = args.idleMinutes ?? 30;
-    const cutoffMs = now - idleMinutes * 60_000;
-    const staleMachines: any[] = await ctx.runQuery(internal.storage.listStaleRunningMachines, {
-      cutoffMs,
-      limit: args.limit,
-    });
-    let hibernated = 0;
-    let errors = 0;
-
-    for (const machine of staleMachines) {
-      if (args.dryRun) {
-        continue;
-      }
-      try {
-        const snapshot = await createBackupSnapshotForMachine(ctx, {
-          machineDocId: machine._id,
-          flyApiToken: args.flyApiToken,
-          flyAppName: args.flyAppName,
-        });
-
-        if (machine.machineId) {
-          await flyRequest({
-            endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}`,
-            token: args.flyApiToken,
-            method: "DELETE",
-          });
-        }
-        if (machine.flyVolumeId) {
-          await flyRequest({
-            endpoint: `/apps/${args.flyAppName}/volumes/${machine.flyVolumeId}`,
-            token: args.flyApiToken,
-            method: "DELETE",
-          });
-        }
-
-        await ctx.runMutation(internal.storage.patchMachineRecord, {
-          machineDocId: machine._id,
-          status: "hibernated",
-          lifecycleMode: "hibernated",
-          latestSnapshotId: snapshot.snapshotId,
-          lastWakeAt: now,
-          lastActivityAt: now,
-        });
-        hibernated += 1;
-      } catch (error: unknown) {
-        errors += 1;
-        await ctx.runMutation(internal.storage.patchMachineRecord, {
-          machineDocId: machine._id,
-          status: "error",
-          lastError: error instanceof Error ? error.message : "Idle sweeper failure",
-        });
-      }
-    }
-
-    return {
-      scanned: staleMachines.length,
-      hibernated,
-      errors,
-    };
-  },
-});
-
 export const recreateAgentFromLatestSnapshot = action({
   args: {
     userId: v.string(),
@@ -563,6 +706,7 @@ export const recreateAgentFromLatestSnapshot = action({
     memoryMB: v.optional(v.number()),
     bridgeUrl: v.optional(v.string()),
     llmApiKey: v.optional(v.string()),
+    openaiApiKey: v.optional(v.string()),
     llmModel: v.optional(v.string()),
     telegramBotToken: v.optional(v.string()),
     serviceId: v.optional(v.string()),
@@ -595,6 +739,194 @@ export const recreateAgentFromLatestSnapshot = action({
     }
     return await provisionMachine(ctx, {
       ...args,
+      restoreFromLatestSnapshot: true,
+    });
+  },
+});
+
+async function approveTelegramPairingOnMachine(args: {
+  flyApiToken: string;
+  flyAppName: string;
+  machineId: string;
+  telegramPairingCode: string;
+}) {
+  const pairingCode = args.telegramPairingCode.trim();
+  if (!pairingCode) {
+    throw new Error("TELEGRAM_PAIRING_CODE is required");
+  }
+  const command = `cd /app && node ./openclaw.mjs pairing approve telegram ${shellSingleQuote(pairingCode)}`;
+  const execResponse = (await flyRequest({
+    endpoint: `/apps/${args.flyAppName}/machines/${args.machineId}/exec`,
+    token: args.flyApiToken,
+    method: "POST",
+    body: { command: ["sh", "-lc", command] },
+  })) as { exit_code?: number; stderr?: string };
+  if (typeof execResponse?.exit_code === "number" && execResponse.exit_code !== 0) {
+    throw new Error(
+      `pairing approve failed with exit code ${execResponse.exit_code}${
+        execResponse.stderr ? `: ${execResponse.stderr}` : ""
+      }`,
+    );
+  }
+}
+
+export const approveTelegramPairing = action({
+  args: {
+    machineDocId: v.id("agentMachines"),
+    flyApiToken: v.string(),
+    flyAppName: v.string(),
+    telegramPairingCode: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const machine: any = await ctx.runQuery(internal.storage.getMachineRecord, {
+      machineDocId: args.machineDocId,
+    });
+    if (!machine?.machineId) {
+      throw new Error("Machine id not available");
+    }
+    await approveTelegramPairingOnMachine({
+      flyApiToken: args.flyApiToken,
+      flyAppName: args.flyAppName,
+      machineId: machine.machineId,
+      telegramPairingCode: args.telegramPairingCode,
+    });
+    await ctx.runMutation(internal.storage.patchMachineRecord, {
+      machineDocId: args.machineDocId,
+      lastWakeAt: Date.now(),
+      lastActivityAt: Date.now(),
+      lifecycleMode: "running",
+    });
+    return null;
+  },
+});
+
+export const approveTelegramPairingWithStoredSecrets = action({
+  args: {
+    machineDocId: v.id("agentMachines"),
+    flyAppName: v.string(),
+    telegramPairingCode: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const machine: any = await ctx.runQuery(internal.storage.getMachineRecord, {
+      machineDocId: args.machineDocId,
+    });
+    if (!machine?.machineId || !machine.userId || !machine.tenantId) {
+      throw new Error("Machine record missing identity or machine id");
+    }
+    const secrets = await getSecretsForAgent(ctx, {
+      tenantId: machine.tenantId,
+      userId: machine.userId,
+    });
+    const flyApiToken = secrets?.flyApiToken;
+    if (!flyApiToken) {
+      throw new Error("Stored flyApiToken not found for this agent");
+    }
+    await approveTelegramPairingOnMachine({
+      flyApiToken,
+      flyAppName: args.flyAppName,
+      machineId: machine.machineId,
+      telegramPairingCode: args.telegramPairingCode,
+    });
+    await ctx.runMutation(internal.storage.patchMachineRecord, {
+      machineDocId: args.machineDocId,
+      lastWakeAt: Date.now(),
+      lastActivityAt: Date.now(),
+      lifecycleMode: "running",
+    });
+    return null;
+  },
+});
+
+export const provisionAgentMachineWithStoredSecrets = action({
+  args: {
+    userId: v.string(),
+    tenantId: v.string(),
+    flyAppName: v.string(),
+    image: v.optional(v.string()),
+    region: v.optional(v.string()),
+    memoryMB: v.optional(v.number()),
+    bridgeUrl: v.optional(v.string()),
+    llmModel: v.optional(v.string()),
+    serviceId: v.optional(v.string()),
+    serviceKey: v.optional(v.string()),
+    appKey: v.optional(v.string()),
+    allowedSkillsJson: v.optional(v.string()),
+    allowedSkills: v.optional(v.array(v.string())),
+    restoreFromLatestSnapshot: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    machineDocId: v.id("agentMachines"),
+    machineId: v.string(),
+    volumeId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const secrets = await getSecretsForAgent(ctx, {
+      tenantId: args.tenantId,
+      userId: args.userId,
+    });
+    if (!secrets?.flyApiToken) {
+      throw new Error("Stored flyApiToken not found for this agent");
+    }
+    return await provisionMachine(ctx, {
+      ...args,
+      flyApiToken: secrets.flyApiToken,
+      llmApiKey: secrets.llmApiKey,
+      openaiApiKey: secrets.openaiApiKey,
+      telegramBotToken: secrets.telegramBotToken,
+      openclawGatewayToken: secrets.openclawGatewayToken,
+    });
+  },
+});
+
+export const recreateAgentFromLatestSnapshotWithStoredSecrets = action({
+  args: {
+    userId: v.string(),
+    tenantId: v.string(),
+    flyAppName: v.string(),
+    image: v.optional(v.string()),
+    region: v.optional(v.string()),
+    memoryMB: v.optional(v.number()),
+    bridgeUrl: v.optional(v.string()),
+    llmModel: v.optional(v.string()),
+    serviceId: v.optional(v.string()),
+    serviceKey: v.optional(v.string()),
+    appKey: v.optional(v.string()),
+    allowedSkillsJson: v.optional(v.string()),
+    allowedSkills: v.optional(v.array(v.string())),
+  },
+  returns: v.object({
+    machineDocId: v.id("agentMachines"),
+    machineId: v.string(),
+    volumeId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const secrets = await getSecretsForAgent(ctx, {
+      tenantId: args.tenantId,
+      userId: args.userId,
+    });
+    if (!secrets?.flyApiToken) {
+      throw new Error("Stored flyApiToken not found for this agent");
+    }
+    const latest: any = await ctx.runQuery(internal.storage.getLatestMachineByUserTenant, {
+      userId: args.userId,
+      tenantId: args.tenantId,
+    });
+    if (latest?.status === "running" && latest.machineId) {
+      return {
+        machineDocId: latest._id,
+        machineId: latest.machineId,
+        volumeId: latest.flyVolumeId ?? "",
+      };
+    }
+    return await provisionMachine(ctx, {
+      ...args,
+      flyApiToken: secrets.flyApiToken,
+      llmApiKey: secrets.llmApiKey,
+      openaiApiKey: secrets.openaiApiKey,
+      telegramBotToken: secrets.telegramBotToken,
+      openclawGatewayToken: secrets.openclawGatewayToken,
       restoreFromLatestSnapshot: true,
     });
   },
@@ -700,5 +1032,154 @@ export const deprovisionAgentMachine = action({
       status: "deleted",
     });
     return null;
+  },
+});
+
+export const startAgentMachineWithStoredSecrets = action({
+  args: {
+    machineDocId: v.id("agentMachines"),
+    flyAppName: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const machine: any = await ctx.runQuery(internal.storage.getMachineRecord, {
+      machineDocId: args.machineDocId,
+    });
+    if (!machine?.tenantId || !machine?.userId) {
+      throw new Error("Machine record missing identity fields");
+    }
+    const secrets = await getSecretsForAgent(ctx, {
+      tenantId: machine.tenantId,
+      userId: machine.userId,
+    });
+    if (!secrets?.flyApiToken) {
+      throw new Error("Stored flyApiToken not found for this agent");
+    }
+    if (!machine?.machineId) {
+      throw new Error("Machine id not available");
+    }
+    await flyRequest({
+      endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}/start`,
+      token: secrets.flyApiToken,
+      method: "POST",
+    });
+    await ctx.runMutation(internal.storage.patchMachineRecord, {
+      machineDocId: args.machineDocId,
+      status: "running",
+      lastWakeAt: Date.now(),
+      lastActivityAt: Date.now(),
+      lifecycleMode: "running",
+    });
+    return null;
+  },
+});
+
+export const stopAgentMachineWithStoredSecrets = action({
+  args: {
+    machineDocId: v.id("agentMachines"),
+    flyAppName: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const machine: any = await ctx.runQuery(internal.storage.getMachineRecord, {
+      machineDocId: args.machineDocId,
+    });
+    if (!machine?.tenantId || !machine?.userId) {
+      throw new Error("Machine record missing identity fields");
+    }
+    const secrets = await getSecretsForAgent(ctx, {
+      tenantId: machine.tenantId,
+      userId: machine.userId,
+    });
+    if (!secrets?.flyApiToken) {
+      throw new Error("Stored flyApiToken not found for this agent");
+    }
+    if (!machine?.machineId) {
+      throw new Error("Machine id not available");
+    }
+    await flyRequest({
+      endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}/stop`,
+      token: secrets.flyApiToken,
+      method: "POST",
+    });
+    await ctx.runMutation(internal.storage.patchMachineRecord, {
+      machineDocId: args.machineDocId,
+      status: "stopped",
+      lifecycleMode: "hibernated",
+    });
+    return null;
+  },
+});
+
+export const deprovisionAgentMachineWithStoredSecrets = action({
+  args: {
+    machineDocId: v.id("agentMachines"),
+    flyAppName: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const machine: any = await ctx.runQuery(internal.storage.getMachineRecord, {
+      machineDocId: args.machineDocId,
+    });
+    if (!machine?.tenantId || !machine?.userId) {
+      throw new Error("Machine record missing identity fields");
+    }
+    const secrets = await getSecretsForAgent(ctx, {
+      tenantId: machine.tenantId,
+      userId: machine.userId,
+    });
+    if (!secrets?.flyApiToken) {
+      throw new Error("Stored flyApiToken not found for this agent");
+    }
+    if (machine.machineId) {
+      await flyRequest({
+        endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}`,
+        token: secrets.flyApiToken,
+        method: "DELETE",
+      });
+    }
+    if (machine.flyVolumeId) {
+      await flyRequest({
+        endpoint: `/apps/${args.flyAppName}/volumes/${machine.flyVolumeId}`,
+        token: secrets.flyApiToken,
+        method: "DELETE",
+      });
+    }
+    await ctx.runMutation(internal.storage.patchMachineRecord, {
+      machineDocId: args.machineDocId,
+      status: "deleted",
+    });
+    return null;
+  },
+});
+
+export const createAgentSnapshotWithStoredSecrets = action({
+  args: {
+    machineDocId: v.id("agentMachines"),
+    flyAppName: v.string(),
+  },
+  returns: v.object({
+    snapshotId: v.id("agentSnapshots"),
+    flyVolumeSnapshotId: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const machine: any = await ctx.runQuery(internal.storage.getMachineRecord, {
+      machineDocId: args.machineDocId,
+    });
+    if (!machine?.tenantId || !machine?.userId) {
+      throw new Error("Machine record missing identity fields");
+    }
+    const secrets = await getSecretsForAgent(ctx, {
+      tenantId: machine.tenantId,
+      userId: machine.userId,
+    });
+    if (!secrets?.flyApiToken) {
+      throw new Error("Stored flyApiToken not found for this agent");
+    }
+    return await createBackupSnapshotForMachine(ctx, {
+      machineDocId: args.machineDocId,
+      flyApiToken: secrets.flyApiToken,
+      flyAppName: args.flyAppName,
+    });
   },
 });

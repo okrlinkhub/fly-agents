@@ -397,24 +397,22 @@ fly logs -a linkhub-agents --machine <machineId> --no-tail
 fly ssh console -a linkhub-agents --machine <machineId> -C "sh -lc 'cd /app && node ./openclaw.mjs pairing approve telegram <PAIRING_CODE>'"
 ```
 
-## Nuovo ciclo cost-saving (idle backup + recreate)
+## Modello lifecycle semplificato (attuale)
 
 ### Obiettivo
-- Spegnere automaticamente macchine inattive da >30 minuti.
-- Salvare backup metadata/state reference in Convex prima dello stop.
-- Ricreare macchina nuova da snapshot al richiamo dello stesso agente.
+- Lasciare le macchine attive senza autospegnimento per inattivita'.
+- Ridurre la complessita' operativa eliminando il ciclo di sweep periodico.
 
-### API introdotte
+### API rilevanti
 - `touchAgentActivity(machineDocId)`:
-  - aggiorna heartbeat (`lastActivityAt`) a ogni traffico reale.
+  - aggiorna heartbeat (`lastActivityAt`) quando serve telemetria attivita'.
 - `createAgentSnapshot(machineDocId, flyApiToken, flyAppName)`:
   - crea snapshot volume Fly e registra manifest su Convex.
-- `sweepIdleAgentsAndSnapshot(flyApiToken, flyAppName, idleMinutes?, limit?, dryRun?)`:
-  - trova running inattive, snapshotta, deprovisiona, marca `hibernated`.
 - `recreateAgentFromLatestSnapshot(...)`:
-  - se agente non e' running, provisiona macchina nuova tentando restore da ultimo snapshot.
+  - utility esplicita di restore da snapshot (non agganciata a uno sweep automatico).
+- `startAgentMachine(...)` / `stopAgentMachine(...)`:
+  - controllo lifecycle manuale.
 
 ### Note operative
-- Per rollout graduale usare `dryRun=true` nello sweeper.
+- Nessun scheduling periodico richiesto per idle sweep.
 - In caso snapshot non disponibile, il provisioning fallback crea volume pulito.
-- Conservare scheduling ogni 5 minuti lato orchestrazione/app caller.
