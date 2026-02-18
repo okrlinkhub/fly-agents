@@ -158,7 +158,11 @@ async function encryptSecret(plaintext: string) {
 
 async function decryptSecret(ciphertext: string) {
   const key = await getSecretsCryptoKey();
-  const [ivEncoded, payloadEncoded] = ciphertext.split(".");
+  const parts = ciphertext.split(".");
+  if (parts.length !== 2) {
+    throw new Error("Invalid encrypted secret format");
+  }
+  const [ivEncoded, payloadEncoded] = parts;
   if (!ivEncoded || !payloadEncoded) {
     throw new Error("Invalid encrypted secret format");
   }
