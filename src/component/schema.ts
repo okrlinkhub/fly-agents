@@ -21,6 +21,7 @@ export default defineSchema({
     bridgeUrl: v.string(),
     serviceId: v.string(),
     serviceKey: v.string(),
+    telegramTokenHash: v.optional(v.string()),
     region: v.string(),
     lastWakeAt: v.optional(v.number()),
     lastActivityAt: v.optional(v.number()),

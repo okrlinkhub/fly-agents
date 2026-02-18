@@ -17,7 +17,7 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "run-p -r 'dev:*'",
+    "dev": "run-p -r dev:*",
     "dev:backend": "convex dev --typecheck-components",
     "dev:frontend": "cd example && vite --clearScreen false",
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
@@ -27,7 +27,7 @@
     "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
     "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
     "lint": "eslint .",
-    "all": "run-p -r 'dev:*' 'test:watch'",
+    "all": "run-p -r dev:* test:watch",
     "test": "vitest run --typecheck",
     "test:watch": "vitest --typecheck --clearScreen false",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
@@ -101,5 +101,8 @@
     "vitest": "4.0.18"
   },
   "types": "./dist/client/index.d.ts",
-  "module": "./dist/client/index.js"
+  "module": "./dist/client/index.js",
+  "dependencies": {
+    "@okrlinkhub/fly-agents": "^0.1.0"
+  }
 }

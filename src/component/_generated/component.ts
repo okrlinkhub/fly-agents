@@ -66,6 +66,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "hibernated"
             | "error"
             | "deleted";
+          telegramTokenHash?: string;
           tenantId: string;
           userId: string;
         },
@@ -99,6 +100,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "hibernated"
             | "error"
             | "deleted";
+          telegramTokenHash?: string;
           tenantId: string;
           userId: string;
         }>,

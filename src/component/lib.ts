@@ -91,6 +91,14 @@ function shellSingleQuote(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+async function sha256Hex(value: string) {
+  const input = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", input);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 async function forceDefaultModelOnMachine(args: {
   flyApiToken: string;
   flyAppName: string;
@@ -261,13 +269,14 @@ async function provisionMachine(ctx: any, args: any): Promise<{
   const allowedSkills =
     parseAllowedSkillsJson(args.allowedSkillsJson) ?? args.allowedSkills ?? ["linkhub-bridge"];
   const bridgeUrl = envOrThrow("AGENT_BRIDGE_URL", args.bridgeUrl);
-  const llmApiKey = envOrThrow("LLM_API_KEY", args.llmApiKey);
+  const llmApiKey = envOrThrow("OPENAI_API_KEY", args.llmApiKey);
   const llmModel = envOrThrow("LLM_MODEL", args.llmModel?.trim() || DEFAULT_LLM_MODEL);
   assertAllowedModel(llmModel);
   const telegramBotToken = envOrThrow("TELEGRAM_BOT_TOKEN", args.telegramBotToken);
   const serviceId = envOrThrow("OPENCLAW_SERVICE_ID", args.serviceId);
   const serviceKey = envOrThrow("OPENCLAW_SERVICE_KEY", args.serviceKey);
   const openclawGatewayToken = envOrThrow("OPENCLAW_GATEWAY_TOKEN", args.openclawGatewayToken);
+  const telegramTokenHash = await sha256Hex(telegramBotToken);
   const appKey = args.appKey?.trim() || "linkhub-w4";
   const memoryMB = args.memoryMB ?? 2048;
   const region = args.region ?? "iad";
@@ -279,6 +288,21 @@ async function provisionMachine(ctx: any, args: any): Promise<{
     .replace(/[^a-z0-9_]/g, "_")
     .slice(0, 10);
   const volumeName = `agent_${safeUserSlug}_${Date.now().toString(36)}`.slice(0, 30);
+
+  const activeMachinesWithSameToken: Array<{ userId: string; tenantId: string }> = await ctx.runQuery(
+    internal.storage.listActiveMachinesByTelegramTokenHash,
+    {
+      telegramTokenHash,
+    },
+  );
+  const conflict = activeMachinesWithSameToken.find(
+    (machine) => machine.userId !== args.userId || machine.tenantId !== args.tenantId,
+  );
+  if (conflict) {
+    throw new Error(
+      "TELEGRAM_BOT_TOKEN is already used by another active machine. Use a unique bot token per user.",
+    );
+  }
 
   const machineDocId: Id<"agentMachines"> = await ctx.runMutation(
     internal.storage.insertMachineRecord,
@@ -292,6 +316,7 @@ async function provisionMachine(ctx: any, args: any): Promise<{
       bridgeUrl,
       serviceId,
       serviceKey,
+      telegramTokenHash,
       region,
       lastActivityAt: Date.now(),
       lifecycleMode: "running",
@@ -354,6 +379,7 @@ async function provisionMachine(ctx: any, args: any): Promise<{
             TENANT_ID: args.tenantId,
             LLM_MODEL: llmModel,
             LLM_API_KEY: llmApiKey,
+            OPENAI_API_KEY: llmApiKey,
             TELEGRAM_BOT_TOKEN: telegramBotToken,
             AGENT_BRIDGE_URL: bridgeUrl,
             OPENCLAW_SERVICE_ID: serviceId,
@@ -388,13 +414,6 @@ async function provisionMachine(ctx: any, args: any): Promise<{
       },
     });
 
-    await forceDefaultModelOnMachine({
-      flyApiToken: args.flyApiToken,
-      flyAppName: args.flyAppName,
-      machineId: machine.id,
-      llmModel,
-    });
-
     await ctx.runMutation(internal.storage.patchMachineRecord, {
       machineDocId,
       status: "running",
@@ -405,6 +424,21 @@ async function provisionMachine(ctx: any, args: any): Promise<{
       lifecycleMode: "running",
       latestSnapshotId: latestSnapshot?._id,
     });
+
+    try {
+      await forceDefaultModelOnMachine({
+        flyApiToken: args.flyApiToken,
+        flyAppName: args.flyAppName,
+        machineId: machine.id,
+        llmModel,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to force model";
+      await ctx.runMutation(internal.storage.patchMachineRecord, {
+        machineDocId,
+        lastError: message,
+      });
+    }
 
     return {
       machineDocId,

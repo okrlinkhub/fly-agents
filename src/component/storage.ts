@@ -35,6 +35,7 @@ export const insertMachineRecord = internalMutation({
     bridgeUrl: v.string(),
     serviceId: v.string(),
     serviceKey: v.string(),
+    telegramTokenHash: v.optional(v.string()),
     region: v.string(),
     lastActivityAt: v.optional(v.number()),
     lifecycleMode: v.optional(v.union(v.literal("running"), v.literal("hibernated"))),
@@ -92,6 +93,22 @@ export const listStaleRunningMachines = internalQuery({
       return stale;
     }
     return stale.slice(0, args.limit);
+  },
+});
+
+export const listActiveMachinesByTelegramTokenHash = internalQuery({
+  args: {
+    telegramTokenHash: v.string(),
+  },
+  returns: v.array(machineRecordValidator),
+  handler: async (ctx, args) => {
+    const all = await ctx.db.query("agentMachines").collect();
+    return all.filter(
+      (machine) =>
+        machine.telegramTokenHash === args.telegramTokenHash &&
+        machine.status !== "deleted" &&
+        machine.status !== "error",
+    );
   },
 });
 

@@ -1,203 +1,192 @@
 import "./App.css";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
-import { Id } from "../convex/_generated/dataModel";
 import { useState } from "react";
 
-// Fake blog posts (not in database)
-const blogPosts = [
-  {
-    id: "blog-post-1",
-    title: "Getting Started with Convex Components",
-    content:
-      "Convex components are a powerful way to build reusable functionality that can be shared across different applications. In this post, we'll explore how to create and use components in your Convex applications.",
-    author: "Jane Doe",
-    date: "2024-01-15",
-  },
-  {
-    id: "blog-post-2",
-    title: "Building Scalable Comment Systems",
-    content:
-      "Comments are a fundamental feature of many web applications. Learn how to build a scalable comment system using Convex components that can handle thousands of comments efficiently.",
-    author: "John Smith",
-    date: "2024-01-20",
-  },
-];
+function App() {
+  const [tenantId, setTenantId] = useState("linkhub-w4");
+  const [userId, setUserId] = useState("user123");
+  const [imageTag, setImageTag] = useState("");
+  const [telegramBotToken, setTelegramBotToken] = useState("");
+  const [selectedMachine, setSelectedMachine] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
+  const [showOnlyDeletedOrError, setShowOnlyDeletedOrError] = useState(false);
+  const [output, setOutput] = useState("Ready");
+  const machines = useQuery(api.example.listTenantMachines, { tenantId });
+  const filteredMachines = (machines ?? []).filter((machine: { status: string }) => {
+    if (!showOnlyDeletedOrError) {
+      return true;
+    }
+    return !(machine.status === "deleted" || machine.status === "error");
+  });
 
-function BlogPostComments({ postId }: { postId: string }) {
-  const comments = useQuery(api.example.list, { targetId: postId });
-  const addComment = useMutation(api.example.add);
-  const translateComment = useMutation(api.example.translateComment);
-  const [commentText, setCommentText] = useState("");
+  const ensureUserAgent = useAction(api.example.ensureUserAgent);
+  const startMyAgent = useAction(api.example.startMyAgent);
+  const stopMyAgent = useAction(api.example.stopMyAgent);
+  const getTelegramPairingCode = useAction(api.example.getTelegramPairingCode);
+  const approveTelegramPairing = useAction(api.example.approveTelegramPairing);
 
-  const handleAddComment = () => {
-    if (commentText.trim()) {
-      addComment({ text: commentText, targetId: postId });
-      setCommentText("");
+  const runEnsure = async () => {
+    setOutput("Provision/start in corso...");
+    try {
+      const result = await ensureUserAgent({
+        userId,
+        tenantId,
+        image: imageTag.trim() || undefined,
+        telegramBotToken: telegramBotToken.trim() || undefined,
+      });
+      setSelectedMachine(String(result.machineDocId));
+      setOutput(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setOutput(error instanceof Error ? error.message : "Errore provisioning");
     }
   };
 
-  const handleTranslateComment = async (commentId: Id<"comments">) => {
-    await translateComment({ commentId });
+  const runStart = async () => {
+    if (!selectedMachine) return;
+    setOutput("Start macchina in corso...");
+    try {
+      await startMyAgent({ machineDocId: selectedMachine });
+      setOutput("Start completato");
+    } catch (error) {
+      setOutput(error instanceof Error ? error.message : "Errore start");
+    }
+  };
+
+  const runStop = async () => {
+    if (!selectedMachine) return;
+    setOutput("Stop macchina in corso...");
+    try {
+      await stopMyAgent({ machineDocId: selectedMachine });
+      setOutput("Stop completato");
+    } catch (error) {
+      setOutput(error instanceof Error ? error.message : "Errore stop");
+    }
+  };
+
+  const runGetPairingCode = async () => {
+    if (!selectedMachine) return;
+    setOutput("Lettura pairing code...");
+    try {
+      const result = await getTelegramPairingCode({ machineDocId: selectedMachine });
+      if (result.code) {
+        setPairingCode(result.code);
+      }
+      if (!result.code) {
+        setOutput(
+          `Nessun pairing code attivo. requests=${result.requestCount}. Invia /start al bot, poi riprova Get Pairing Code.\n\n${result.raw}`,
+        );
+      } else {
+        setOutput(JSON.stringify(result, null, 2));
+      }
+    } catch (error) {
+      setOutput(error instanceof Error ? error.message : "Errore get pairing");
+    }
+  };
+
+  const runApprovePairing = async () => {
+    if (!selectedMachine || !pairingCode.trim()) return;
+    setOutput("Approvo pairing...");
+    try {
+      const result = await approveTelegramPairing({
+        machineDocId: selectedMachine,
+        pairingCode: pairingCode.trim(),
+      });
+      setOutput(JSON.stringify(result, null, 2));
+    } catch (error) {
+      setOutput(error instanceof Error ? error.message : "Errore approve pairing");
+    }
   };
 
   return (
-    <div
-      style={{
-        marginTop: "1.5rem",
-        padding: "1rem",
-        border: "1px solid rgba(128, 128, 128, 0.3)",
-        borderRadius: "8px",
-      }}
-    >
-      <h4 style={{ marginTop: 0, marginBottom: "1rem" }}>
-        Comments ({comments?.length ?? 0})
-      </h4>
-      <div style={{ marginBottom: "1rem" }}>
-        <input
-          type="text"
-          value={commentText}
-          onChange={(e) => setCommentText(e.target.value)}
-          placeholder="Enter a comment"
-          style={{ marginRight: "0.5rem", padding: "0.5rem", width: "70%" }}
-          onKeyPress={(e) => e.key === "Enter" && handleAddComment()}
-        />
-        <button onClick={handleAddComment}>Add Comment</button>
+    <div className="app-shell">
+      <h1>Fly Agent Console</h1>
+      <p className="subtitle">Provisioning, pairing Telegram, start/stop da UI</p>
+
+      <div className="grid">
+        <section className="panel">
+          <h2>Provision</h2>
+          <label>
+            Tenant ID
+            <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
+          </label>
+          <label>
+            User ID
+            <input value={userId} onChange={(e) => setUserId(e.target.value)} />
+          </label>
+          <label>
+            Image (opzionale)
+            <input
+              value={imageTag}
+              onChange={(e) => setImageTag(e.target.value)}
+              placeholder="registry.fly.io/linkhub-agents:deployment-..."
+            />
+          </label>
+          <label>
+            Telegram Bot Token (opzionale)
+            <input
+              value={telegramBotToken}
+              onChange={(e) => setTelegramBotToken(e.target.value)}
+              type="password"
+              placeholder="123456:AA..."
+            />
+          </label>
+          <button onClick={runEnsure}>Ensure User Agent</button>
+        </section>
+
+        <section className="panel">
+          <h2>Machine Control</h2>
+          <label>
+            Machine Doc ID
+            <input
+              value={selectedMachine}
+              onChange={(e) => setSelectedMachine(e.target.value)}
+              placeholder="j57..."
+            />
+          </label>
+          <div className="row">
+            <button onClick={runStart}>Start</button>
+            <button onClick={runStop}>Stop</button>
+          </div>
+          <label>
+            Pairing code
+            <input value={pairingCode} onChange={(e) => setPairingCode(e.target.value)} />
+          </label>
+          <div className="row">
+            <button onClick={runGetPairingCode}>Get Pairing Code</button>
+            <button onClick={runApprovePairing}>Approve Pairing</button>
+          </div>
+        </section>
+
+        <section className="panel panel-wide">
+          <h2>Machines</h2>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={showOnlyDeletedOrError}
+              onChange={(e) => setShowOnlyDeletedOrError(e.target.checked)}
+            />
+            Mostra solo macchine attive
+          </label>
+          <ul className="machine-list">
+            {filteredMachines.map((machine: { _id: string; status: string; machineId?: string }) => (
+              <li key={machine._id}>
+                <button className="machine-item" onClick={() => setSelectedMachine(String(machine._id))}>
+                  <span>{String(machine._id)}</span>
+                  <span>{machine.status}</span>
+                  <span>{machine.machineId ?? "-"}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="panel panel-wide">
+          <h2>Output</h2>
+          <pre>{output}</pre>
+        </section>
       </div>
-      <ul style={{ textAlign: "left", listStyle: "none", padding: 0 }}>
-        {comments?.map((comment: { _id: Id<"comments">; text: string; translatedText?: string }) => (
-          <li
-            key={comment._id}
-            style={{
-              marginBottom: "0.5rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              padding: "0.5rem",
-              backgroundColor: "rgba(128, 128, 128, 0.1)",
-              borderRadius: "4px",
-            }}
-          >
-            <span style={{ flex: 1 }}>{comment.text}</span>
-            <button
-              onClick={() => handleTranslateComment(comment._id)}
-              style={{
-                padding: "0.25rem 0.5rem",
-                fontSize: "0.75rem",
-                backgroundColor: "#ff9800",
-                color: "white",
-                border: "none",
-                borderRadius: "4px",
-                cursor: "pointer",
-              }}
-            >
-              🏴‍☠️ Translate to Pirate Talk
-            </button>
-          </li>
-        ))}
-        {comments?.length === 0 && (
-          <li
-            style={{ color: "rgba(128, 128, 128, 0.8)", fontStyle: "italic" }}
-          >
-            No comments yet. Be the first to comment!
-          </li>
-        )}
-      </ul>
     </div>
-  );
-}
-
-function App() {
-  // Construct the HTTP endpoint URL
-  // Replace .convex.cloud with .convex.site for HTTP endpoints
-  const convexUrl = import.meta.env.VITE_CONVEX_URL.replace(".cloud", ".site");
-
-  return (
-    <>
-      <h1>Example App</h1>
-      <div className="card">
-        {blogPosts.map((post) => (
-          <div
-            key={post.id}
-            style={{
-              marginBottom: "2rem",
-              padding: "1.5rem",
-              border: "1px solid rgba(128, 128, 128, 0.3)",
-              borderRadius: "8px",
-            }}
-          >
-            <h2 style={{ marginTop: 0 }}>{post.title}</h2>
-            <div
-              style={{
-                marginBottom: "0.5rem",
-                color: "rgba(128, 128, 128, 0.8)",
-                fontSize: "0.9rem",
-              }}
-            >
-              By {post.author} • {post.date}
-            </div>
-            <p style={{ lineHeight: "1.6", marginBottom: "1rem" }}>
-              {post.content}
-            </p>
-            <BlogPostComments postId={post.id} />
-          </div>
-        ))}
-        <div
-          style={{
-            marginTop: "1.5rem",
-            padding: "1rem",
-            backgroundColor: "rgba(128, 128, 128, 0.1)",
-            borderRadius: "8px",
-          }}
-        >
-          <h3>HTTP Endpoint Demo</h3>
-          <p style={{ fontSize: "0.9rem", marginBottom: "0.5rem" }}>
-            The component exposes an HTTP endpoint to get the latest comment:
-          </p>
-          <div
-            style={{
-              display: "flex",
-              gap: "0.5rem",
-              flexDirection: "column",
-              justifyContent: "center",
-            }}
-          >
-            {blogPosts.map((post) => {
-              const httpUrl =
-                convexUrl +
-                `/comments/last?targetId=${encodeURIComponent(post.id)}`;
-              return (
-                <a
-                  key={post.id}
-                  href={httpUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    display: "inline-block",
-                    padding: "0.5rem 1rem",
-                    backgroundColor: "#007bff",
-                    color: "white",
-                    textDecoration: "none",
-                    borderRadius: "4px",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  {post.title} - HTTP Endpoint
-                </a>
-              );
-            })}
-          </div>
-          <p style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.5rem" }}>
-            See <code>example/convex/http.ts</code> for the HTTP route
-            configuration
-          </p>
-        </div>
-        <p>
-          See <code>example/convex/example.ts</code> for all the ways to use
-          this component
-        </p>
-      </div>
-    </>
   );
 }
 

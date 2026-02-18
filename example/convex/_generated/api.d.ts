@@ -49,5 +49,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  flyAgents: import("@okrlinkhub/fly-agents/_generated/component.js").ComponentApi<"flyAgents">;
+  flyAgents: import("../../../src/component/_generated/component.js").ComponentApi<"flyAgents">;
 };

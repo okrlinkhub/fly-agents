@@ -1,6 +1,5 @@
 import { defineApp } from "convex/server";
-import flyAgents from "@okrlinkhub/fly-agents/convex.config.js";
-
+import flyAgents from "../../src/component/convex.config.js";
 const app = defineApp();
 app.use(flyAgents);
 

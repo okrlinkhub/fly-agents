@@ -1,42 +1,121 @@
 #root {
-  max-width: 1280px;
+  width: 100%;
+  max-width: 1100px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 20px;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.app-shell {
+  color: #e8edf2;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
+.subtitle {
+  margin-top: -6px;
+  color: #9eb1c0;
+}
+
+.grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.panel {
+  border: 1px solid #2a3946;
+  border-radius: 12px;
+  background: #15212b;
+  padding: 14px;
+}
+
+.panel-wide {
+  grid-column: 1 / -1;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+h2 {
+  margin-bottom: 10px;
+  font-size: 16px;
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+  color: #b6c4d0;
+  font-size: 13px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin-top: 0;
+}
+
+input {
+  width: 100%;
+  margin-top: 6px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid #33485b;
+  background: #0f1921;
+  color: #e8edf2;
+  padding: 9px 10px;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid #2f5d8f;
+  background: #1b4f7a;
+  color: #f2f7fb;
+  padding: 8px 12px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.machine-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.machine-list li + li {
+  margin-top: 8px;
+}
+
+.machine-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1.3fr auto 1fr;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid #2a3946;
+  background: #10202c;
+}
+
+pre {
+  margin: 0;
+  padding: 10px;
+  background: #0e1720;
+  border-radius: 8px;
+  border: 1px solid #2a3946;
+  overflow: auto;
+}
+
+@media (max-width: 780px) {
+  .grid {
+    grid-template-columns: 1fr;
   }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
 }
