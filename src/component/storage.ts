@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server.js";
+import type { Doc } from "./_generated/dataModel.js";
 import schema from "./schema.js";
 
 const machineStatusValidator = v.union(
@@ -25,6 +26,18 @@ const companySecretRecordValidator = schema.tables.companySecrets.validator.exte
   _id: v.id("companySecrets"),
   _creationTime: v.number(),
 });
+
+const pickLatestCompanySecretRecord = (rows: Array<Doc<"companySecrets">>) => {
+  if (rows.length === 0) {
+    return null;
+  }
+  const sorted = [...rows].sort((a, b) => {
+    const aUpdatedAt = a.updatedAt ?? a._creationTime;
+    const bUpdatedAt = b.updatedAt ?? b._creationTime;
+    return bUpdatedAt - aUpdatedAt;
+  });
+  return sorted[0] ?? null;
+};
 
 export const getMachineRecord = internalQuery({
   args: { machineDocId: v.id("agentMachines") },
@@ -306,10 +319,11 @@ export const getCompanySecretsRecord = internalQuery({
   },
   returns: v.union(v.null(), companySecretRecordValidator),
   handler: async (ctx, args) => {
-    return await ctx.db
+    const rows = await ctx.db
       .query("companySecrets")
       .withIndex("by_tenantId", (q) => q.eq("tenantId", args.tenantId))
-      .unique();
+      .collect();
+    return pickLatestCompanySecretRecord(rows);
   },
 });
 
@@ -329,12 +343,18 @@ export const upsertCompanySecretsRecord = internalMutation({
   },
   returns: v.id("companySecrets"),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
+    const rows = await ctx.db
       .query("companySecrets")
       .withIndex("by_tenantId", (q) => q.eq("tenantId", args.tenantId))
-      .unique();
+      .collect();
+    const existing = pickLatestCompanySecretRecord(rows);
     if (existing) {
       await ctx.db.patch(existing._id, args);
+      for (const row of rows) {
+        if (row._id !== existing._id) {
+          await ctx.db.delete(row._id);
+        }
+      }
       return existing._id;
     }
     return await ctx.db.insert("companySecrets", args);
@@ -347,12 +367,12 @@ export const clearCompanySecretsRecord = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
+    const rows = await ctx.db
       .query("companySecrets")
       .withIndex("by_tenantId", (q) => q.eq("tenantId", args.tenantId))
-      .unique();
-    if (existing) {
-      await ctx.db.delete(existing._id);
+      .collect();
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
     }
     return null;
   },
