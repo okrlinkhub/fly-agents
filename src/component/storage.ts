@@ -21,6 +21,11 @@ const secretRecordValidator = schema.tables.agentVmSecrets.validator.extend({
   _creationTime: v.number(),
 });
 
+const companySecretRecordValidator = schema.tables.companySecrets.validator.extend({
+  _id: v.id("companySecrets"),
+  _creationTime: v.number(),
+});
+
 export const getMachineRecord = internalQuery({
   args: { machineDocId: v.id("agentMachines") },
   returns: v.union(v.null(), machineRecordValidator),
@@ -206,6 +211,31 @@ export const getAgentSecretsRecord = internalQuery({
   },
 });
 
+export const getLatestAgentSecretsRecordByUserTenant = internalQuery({
+  args: {
+    userId: v.string(),
+    tenantId: v.string(),
+  },
+  returns: v.union(v.null(), secretRecordValidator),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("agentVmSecrets")
+      .withIndex("by_userId_and_tenantId", (q) =>
+        q.eq("userId", args.userId).eq("tenantId", args.tenantId),
+      )
+      .collect();
+    if (rows.length === 0) {
+      return null;
+    }
+    const sorted = [...rows].sort((a, b) => {
+      const aUpdatedAt = a.updatedAt ?? a._creationTime;
+      const bUpdatedAt = b.updatedAt ?? b._creationTime;
+      return bUpdatedAt - aUpdatedAt;
+    });
+    return sorted[0] ?? null;
+  },
+});
+
 export const upsertAgentSecretsRecord = internalMutation({
   args: {
     agentKey: v.string(),
@@ -242,6 +272,84 @@ export const clearAgentSecretsRecord = internalMutation({
     const existing = await ctx.db
       .query("agentVmSecrets")
       .withIndex("by_agentKey", (q) => q.eq("agentKey", args.agentKey))
+      .unique();
+    if (existing) {
+      await ctx.db.delete(existing._id);
+    }
+    return null;
+  },
+});
+
+export const clearAgentSecretsRecordsByUserTenant = internalMutation({
+  args: {
+    userId: v.string(),
+    tenantId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("agentVmSecrets")
+      .withIndex("by_userId_and_tenantId", (q) =>
+        q.eq("userId", args.userId).eq("tenantId", args.tenantId),
+      )
+      .collect();
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+    return null;
+  },
+});
+
+export const getCompanySecretsRecord = internalQuery({
+  args: {
+    tenantId: v.string(),
+  },
+  returns: v.union(v.null(), companySecretRecordValidator),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("companySecrets")
+      .withIndex("by_tenantId", (q) => q.eq("tenantId", args.tenantId))
+      .unique();
+  },
+});
+
+export const upsertCompanySecretsRecord = internalMutation({
+  args: {
+    tenantId: v.string(),
+    flyAppNameEnc: v.optional(v.string()),
+    imageEnc: v.optional(v.string()),
+    llmModelEnc: v.optional(v.string()),
+    openclawAppKeyEnc: v.optional(v.string()),
+    allowedSkillsJsonEnc: v.optional(v.string()),
+    flyApiTokenEnc: v.optional(v.string()),
+    llmApiKeyEnc: v.optional(v.string()),
+    openaiApiKeyEnc: v.optional(v.string()),
+    openclawGatewayTokenEnc: v.optional(v.string()),
+    updatedAt: v.number(),
+  },
+  returns: v.id("companySecrets"),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("companySecrets")
+      .withIndex("by_tenantId", (q) => q.eq("tenantId", args.tenantId))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, args);
+      return existing._id;
+    }
+    return await ctx.db.insert("companySecrets", args);
+  },
+});
+
+export const clearCompanySecretsRecord = internalMutation({
+  args: {
+    tenantId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("companySecrets")
+      .withIndex("by_tenantId", (q) => q.eq("tenantId", args.tenantId))
       .unique();
     if (existing) {
       await ctx.db.delete(existing._id);

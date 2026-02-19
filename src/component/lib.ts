@@ -20,6 +20,20 @@ const secretMetaValidator = v.object({
   hasOpenclawGatewayToken: v.boolean(),
 });
 
+const companySecretMetaValidator = v.object({
+  tenantId: v.string(),
+  updatedAt: v.number(),
+  hasFlyAppName: v.boolean(),
+  hasImage: v.boolean(),
+  hasLlmModel: v.boolean(),
+  hasOpenclawAppKey: v.boolean(),
+  hasAllowedSkillsJson: v.boolean(),
+  hasFlyApiToken: v.boolean(),
+  hasLlmApiKey: v.boolean(),
+  hasOpenaiApiKey: v.boolean(),
+  hasOpenclawGatewayToken: v.boolean(),
+});
+
 type FlyRequestArgs = {
   endpoint: string;
   token: string;
@@ -118,6 +132,26 @@ type SecretPayload = {
   openaiApiKey?: string;
   telegramBotToken?: string;
   openclawGatewayToken?: string;
+};
+
+type CompanySecretPayload = {
+  flyAppName?: string;
+  image?: string;
+  llmModel?: string;
+  openclawAppKey?: string;
+  allowedSkillsJson?: string;
+  flyApiToken?: string;
+  llmApiKey?: string;
+  openaiApiKey?: string;
+  openclawGatewayToken?: string;
+};
+
+type DeprovisionResult = {
+  machineFound: boolean;
+  alreadyDeleted: boolean;
+  machineRemovedFromFly: boolean;
+  volumeRemovedFromFly: boolean;
+  recordMarkedDeleted: boolean;
 };
 
 const cachedCryptoKeys = new Map<string, Promise<CryptoKey>>();
@@ -247,9 +281,40 @@ async function getSecretsForAgent(ctx: any, args: {
   secretsEncryptionKey: string;
 }) {
   const agentKey = agentKeyFor(args.userId, args.tenantId);
-  const record: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
+  let record: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
   if (!record) {
-    return null;
+    record = await ctx.runQuery(internal.storage.getLatestAgentSecretsRecordByUserTenant, {
+      userId: args.userId,
+      tenantId: args.tenantId,
+    });
+    if (record) {
+      await ctx.runMutation(internal.storage.upsertAgentSecretsRecord, {
+        agentKey,
+        tenantId: args.tenantId,
+        userId: args.userId,
+        flyApiTokenEnc: record.flyApiTokenEnc,
+        llmApiKeyEnc: record.llmApiKeyEnc,
+        openaiApiKeyEnc: record.openaiApiKeyEnc,
+        telegramBotTokenEnc: record.telegramBotTokenEnc,
+        openclawGatewayTokenEnc: record.openclawGatewayTokenEnc,
+        updatedAt: Date.now(),
+      });
+    }
+  }
+  if (!record) {
+    const companySecrets = await getCompanySecretsForTenant(ctx, {
+      tenantId: args.tenantId,
+      secretsEncryptionKey: args.secretsEncryptionKey,
+    });
+    if (!companySecrets) {
+      return null;
+    }
+    return {
+      flyApiToken: companySecrets.flyApiToken,
+      llmApiKey: companySecrets.llmApiKey,
+      openaiApiKey: companySecrets.openaiApiKey,
+      openclawGatewayToken: companySecrets.openclawGatewayToken,
+    };
   }
   const decrypted: SecretPayload = {};
   if (record.flyApiTokenEnc) {
@@ -266,6 +331,60 @@ async function getSecretsForAgent(ctx: any, args: {
       record.telegramBotTokenEnc,
       args.secretsEncryptionKey,
     );
+  }
+  if (record.openclawGatewayTokenEnc) {
+    decrypted.openclawGatewayToken = await decryptSecret(
+      record.openclawGatewayTokenEnc,
+      args.secretsEncryptionKey,
+    );
+  }
+  const companySecrets = await getCompanySecretsForTenant(ctx, {
+    tenantId: args.tenantId,
+    secretsEncryptionKey: args.secretsEncryptionKey,
+  });
+  if (companySecrets) {
+    decrypted.flyApiToken = decrypted.flyApiToken ?? companySecrets.flyApiToken;
+    decrypted.llmApiKey = decrypted.llmApiKey ?? companySecrets.llmApiKey;
+    decrypted.openaiApiKey = decrypted.openaiApiKey ?? companySecrets.openaiApiKey;
+    decrypted.openclawGatewayToken = decrypted.openclawGatewayToken ?? companySecrets.openclawGatewayToken;
+  }
+  return decrypted;
+}
+
+async function getCompanySecretsForTenant(ctx: any, args: {
+  tenantId: string;
+  secretsEncryptionKey: string;
+}) {
+  const record: any = await ctx.runQuery(internal.storage.getCompanySecretsRecord, {
+    tenantId: args.tenantId,
+  });
+  if (!record) {
+    return null;
+  }
+  const decrypted: CompanySecretPayload = {};
+  if (record.flyAppNameEnc) {
+    decrypted.flyAppName = await decryptSecret(record.flyAppNameEnc, args.secretsEncryptionKey);
+  }
+  if (record.imageEnc) {
+    decrypted.image = await decryptSecret(record.imageEnc, args.secretsEncryptionKey);
+  }
+  if (record.llmModelEnc) {
+    decrypted.llmModel = await decryptSecret(record.llmModelEnc, args.secretsEncryptionKey);
+  }
+  if (record.openclawAppKeyEnc) {
+    decrypted.openclawAppKey = await decryptSecret(record.openclawAppKeyEnc, args.secretsEncryptionKey);
+  }
+  if (record.allowedSkillsJsonEnc) {
+    decrypted.allowedSkillsJson = await decryptSecret(record.allowedSkillsJsonEnc, args.secretsEncryptionKey);
+  }
+  if (record.flyApiTokenEnc) {
+    decrypted.flyApiToken = await decryptSecret(record.flyApiTokenEnc, args.secretsEncryptionKey);
+  }
+  if (record.llmApiKeyEnc) {
+    decrypted.llmApiKey = await decryptSecret(record.llmApiKeyEnc, args.secretsEncryptionKey);
+  }
+  if (record.openaiApiKeyEnc) {
+    decrypted.openaiApiKey = await decryptSecret(record.openaiApiKeyEnc, args.secretsEncryptionKey);
   }
   if (record.openclawGatewayTokenEnc) {
     decrypted.openclawGatewayToken = await decryptSecret(
@@ -335,7 +454,12 @@ export const getAgentSecretsMeta = query({
   returns: v.union(v.null(), secretMetaValidator),
   handler: async (ctx, args) => {
     const agentKey = agentKeyFor(args.userId, args.tenantId);
-    const record: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
+    const record: any =
+      (await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey })) ??
+      (await ctx.runQuery(internal.storage.getLatestAgentSecretsRecordByUserTenant, {
+        userId: args.userId,
+        tenantId: args.tenantId,
+      }));
     if (!record) {
       return null;
     }
@@ -366,7 +490,12 @@ export const upsertAgentSecrets = mutation({
   returns: secretMetaValidator,
   handler: async (ctx, args) => {
     const agentKey = agentKeyFor(args.userId, args.tenantId);
-    const existing: any = await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey });
+    const existing: any =
+      (await ctx.runQuery(internal.storage.getAgentSecretsRecord, { agentKey })) ??
+      (await ctx.runQuery(internal.storage.getLatestAgentSecretsRecordByUserTenant, {
+        userId: args.userId,
+        tenantId: args.tenantId,
+      }));
 
     const next = {
       flyApiToken: normalizeOptionalSecret(args.flyApiToken),
@@ -430,8 +559,169 @@ export const clearAgentSecrets = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const agentKey = agentKeyFor(args.userId, args.tenantId);
-    await ctx.runMutation(internal.storage.clearAgentSecretsRecord, { agentKey });
+    await ctx.runMutation(internal.storage.clearAgentSecretsRecordsByUserTenant, {
+      userId: args.userId,
+      tenantId: args.tenantId,
+    });
+    return null;
+  },
+});
+
+export const getCompanySecretsMeta = query({
+  args: {
+    tenantId: v.string(),
+  },
+  returns: v.union(v.null(), companySecretMetaValidator),
+  handler: async (ctx, args) => {
+    const record: any = await ctx.runQuery(internal.storage.getCompanySecretsRecord, {
+      tenantId: args.tenantId,
+    });
+    if (!record) {
+      return null;
+    }
+    return {
+      tenantId: record.tenantId,
+      updatedAt: record.updatedAt,
+      hasFlyAppName: Boolean(record.flyAppNameEnc),
+      hasImage: Boolean(record.imageEnc),
+      hasLlmModel: Boolean(record.llmModelEnc),
+      hasOpenclawAppKey: Boolean(record.openclawAppKeyEnc),
+      hasAllowedSkillsJson: Boolean(record.allowedSkillsJsonEnc),
+      hasFlyApiToken: Boolean(record.flyApiTokenEnc),
+      hasLlmApiKey: Boolean(record.llmApiKeyEnc),
+      hasOpenaiApiKey: Boolean(record.openaiApiKeyEnc),
+      hasOpenclawGatewayToken: Boolean(record.openclawGatewayTokenEnc),
+    };
+  },
+});
+
+export const getCompanySecrets = query({
+  args: {
+    tenantId: v.string(),
+    secretsEncryptionKey: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      flyAppName: v.optional(v.string()),
+      image: v.optional(v.string()),
+      llmModel: v.optional(v.string()),
+      openclawAppKey: v.optional(v.string()),
+      allowedSkillsJson: v.optional(v.string()),
+      flyApiToken: v.optional(v.string()),
+      llmApiKey: v.optional(v.string()),
+      openaiApiKey: v.optional(v.string()),
+      openclawGatewayToken: v.optional(v.string()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    return await getCompanySecretsForTenant(ctx, args);
+  },
+});
+
+export const upsertCompanySecrets = mutation({
+  args: {
+    tenantId: v.string(),
+    secretsEncryptionKey: v.string(),
+    flyAppName: v.optional(v.string()),
+    image: v.optional(v.string()),
+    llmModel: v.optional(v.string()),
+    openclawAppKey: v.optional(v.string()),
+    allowedSkillsJson: v.optional(v.string()),
+    flyApiToken: v.optional(v.string()),
+    llmApiKey: v.optional(v.string()),
+    openaiApiKey: v.optional(v.string()),
+    openclawGatewayToken: v.optional(v.string()),
+  },
+  returns: companySecretMetaValidator,
+  handler: async (ctx, args) => {
+    const existing: any = await ctx.runQuery(internal.storage.getCompanySecretsRecord, {
+      tenantId: args.tenantId,
+    });
+    const next = {
+      flyAppName: normalizeOptionalSecret(args.flyAppName),
+      image: normalizeOptionalSecret(args.image),
+      llmModel: normalizeOptionalSecret(args.llmModel),
+      openclawAppKey: normalizeOptionalSecret(args.openclawAppKey),
+      allowedSkillsJson: normalizeOptionalSecret(args.allowedSkillsJson),
+      flyApiToken: normalizeOptionalSecret(args.flyApiToken),
+      llmApiKey: normalizeOptionalSecret(args.llmApiKey),
+      openaiApiKey: normalizeOptionalSecret(args.openaiApiKey),
+      openclawGatewayToken: normalizeOptionalSecret(args.openclawGatewayToken),
+    };
+    const flyAppNameEnc =
+      next.flyAppName !== undefined
+        ? await encryptSecret(next.flyAppName, args.secretsEncryptionKey)
+        : existing?.flyAppNameEnc;
+    const imageEnc =
+      next.image !== undefined ? await encryptSecret(next.image, args.secretsEncryptionKey) : existing?.imageEnc;
+    const llmModelEnc =
+      next.llmModel !== undefined
+        ? await encryptSecret(next.llmModel, args.secretsEncryptionKey)
+        : existing?.llmModelEnc;
+    const openclawAppKeyEnc =
+      next.openclawAppKey !== undefined
+        ? await encryptSecret(next.openclawAppKey, args.secretsEncryptionKey)
+        : existing?.openclawAppKeyEnc;
+    const allowedSkillsJsonEnc =
+      next.allowedSkillsJson !== undefined
+        ? await encryptSecret(next.allowedSkillsJson, args.secretsEncryptionKey)
+        : existing?.allowedSkillsJsonEnc;
+    const flyApiTokenEnc =
+      next.flyApiToken !== undefined
+        ? await encryptSecret(next.flyApiToken, args.secretsEncryptionKey)
+        : existing?.flyApiTokenEnc;
+    const llmApiKeyEnc =
+      next.llmApiKey !== undefined
+        ? await encryptSecret(next.llmApiKey, args.secretsEncryptionKey)
+        : existing?.llmApiKeyEnc;
+    const openaiApiKeyEnc =
+      next.openaiApiKey !== undefined
+        ? await encryptSecret(next.openaiApiKey, args.secretsEncryptionKey)
+        : existing?.openaiApiKeyEnc;
+    const openclawGatewayTokenEnc =
+      next.openclawGatewayToken !== undefined
+        ? await encryptSecret(next.openclawGatewayToken, args.secretsEncryptionKey)
+        : existing?.openclawGatewayTokenEnc;
+    const updatedAt = Date.now();
+    await ctx.runMutation(internal.storage.upsertCompanySecretsRecord, {
+      tenantId: args.tenantId,
+      flyAppNameEnc,
+      imageEnc,
+      llmModelEnc,
+      openclawAppKeyEnc,
+      allowedSkillsJsonEnc,
+      flyApiTokenEnc,
+      llmApiKeyEnc,
+      openaiApiKeyEnc,
+      openclawGatewayTokenEnc,
+      updatedAt,
+    });
+    return {
+      tenantId: args.tenantId,
+      updatedAt,
+      hasFlyAppName: Boolean(flyAppNameEnc),
+      hasImage: Boolean(imageEnc),
+      hasLlmModel: Boolean(llmModelEnc),
+      hasOpenclawAppKey: Boolean(openclawAppKeyEnc),
+      hasAllowedSkillsJson: Boolean(allowedSkillsJsonEnc),
+      hasFlyApiToken: Boolean(flyApiTokenEnc),
+      hasLlmApiKey: Boolean(llmApiKeyEnc),
+      hasOpenaiApiKey: Boolean(openaiApiKeyEnc),
+      hasOpenclawGatewayToken: Boolean(openclawGatewayTokenEnc),
+    };
+  },
+});
+
+export const clearCompanySecrets = mutation({
+  args: {
+    tenantId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.runMutation(internal.storage.clearCompanySecretsRecord, {
+      tenantId: args.tenantId,
+    });
     return null;
   },
 });
@@ -1060,15 +1350,30 @@ export const deprovisionAgentMachine = action({
     flyApiToken: v.string(),
     flyAppName: v.string(),
   },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const machine: { machineId?: string; flyVolumeId?: string } | null =
+  returns: v.object({
+    machineFound: v.boolean(),
+    alreadyDeleted: v.boolean(),
+    machineRemovedFromFly: v.boolean(),
+    volumeRemovedFromFly: v.boolean(),
+    recordMarkedDeleted: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<DeprovisionResult> => {
+    const machine: { status?: string; machineId?: string; flyVolumeId?: string } | null =
       await ctx.runQuery(internal.storage.getMachineRecord, {
         machineDocId: args.machineDocId,
       });
     if (!machine) {
-      return null;
+      return {
+        machineFound: false,
+        alreadyDeleted: false,
+        machineRemovedFromFly: false,
+        volumeRemovedFromFly: false,
+        recordMarkedDeleted: false,
+      };
     }
+    const alreadyDeleted: boolean = machine.status === "deleted";
+    let machineRemovedFromFly = false;
+    let volumeRemovedFromFly = false;
 
     if (machine.machineId) {
       await flyRequest({
@@ -1076,6 +1381,7 @@ export const deprovisionAgentMachine = action({
         token: args.flyApiToken,
         method: "DELETE",
       });
+      machineRemovedFromFly = true;
     }
     if (machine.flyVolumeId) {
       await flyRequest({
@@ -1083,13 +1389,20 @@ export const deprovisionAgentMachine = action({
         token: args.flyApiToken,
         method: "DELETE",
       });
+      volumeRemovedFromFly = true;
     }
 
     await ctx.runMutation(internal.storage.patchMachineRecord, {
       machineDocId: args.machineDocId,
       status: "deleted",
     });
-    return null;
+    return {
+      machineFound: true,
+      alreadyDeleted,
+      machineRemovedFromFly,
+      volumeRemovedFromFly,
+      recordMarkedDeleted: true,
+    };
   },
 });
 
@@ -1184,14 +1497,30 @@ export const deprovisionAgentMachineWithStoredSecrets = action({
     secretsEncryptionKey: v.string(),
     flyApiToken: v.optional(v.string()),
   },
-  returns: v.null(),
-  handler: async (ctx, args) => {
+  returns: v.object({
+    machineFound: v.boolean(),
+    alreadyDeleted: v.boolean(),
+    machineRemovedFromFly: v.boolean(),
+    volumeRemovedFromFly: v.boolean(),
+    recordMarkedDeleted: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<DeprovisionResult> => {
     const machine: any = await ctx.runQuery(internal.storage.getMachineRecord, {
       machineDocId: args.machineDocId,
     });
+    if (!machine) {
+      return {
+        machineFound: false,
+        alreadyDeleted: false,
+        machineRemovedFromFly: false,
+        volumeRemovedFromFly: false,
+        recordMarkedDeleted: false,
+      };
+    }
     if (!machine?.tenantId || !machine?.userId) {
       throw new Error("Machine record missing identity fields");
     }
+    const alreadyDeleted: boolean = machine.status === "deleted";
     const secrets = await getSecretsForAgent(ctx, {
       tenantId: machine.tenantId,
       userId: machine.userId,
@@ -1201,12 +1530,15 @@ export const deprovisionAgentMachineWithStoredSecrets = action({
     if (!flyApiToken) {
       throw new Error("Stored flyApiToken not found for this agent");
     }
+    let machineRemovedFromFly = false;
+    let volumeRemovedFromFly = false;
     if (machine.machineId) {
       await flyRequest({
         endpoint: `/apps/${args.flyAppName}/machines/${machine.machineId}`,
         token: flyApiToken,
         method: "DELETE",
       });
+      machineRemovedFromFly = true;
     }
     if (machine.flyVolumeId) {
       await flyRequest({
@@ -1214,12 +1546,19 @@ export const deprovisionAgentMachineWithStoredSecrets = action({
         token: flyApiToken,
         method: "DELETE",
       });
+      volumeRemovedFromFly = true;
     }
     await ctx.runMutation(internal.storage.patchMachineRecord, {
       machineDocId: args.machineDocId,
       status: "deleted",
     });
-    return null;
+    return {
+      machineFound: true,
+      alreadyDeleted,
+      machineRemovedFromFly,
+      volumeRemovedFromFly,
+      recordMarkedDeleted: true,
+    };
   },
 });
 

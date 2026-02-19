@@ -72,4 +72,17 @@ export default defineSchema({
     .index("by_agentKey", ["agentKey"])
     .index("by_tenantId", ["tenantId"])
     .index("by_userId_and_tenantId", ["userId", "tenantId"]),
+  companySecrets: defineTable({
+    tenantId: v.string(),
+    flyAppNameEnc: v.optional(v.string()),
+    imageEnc: v.optional(v.string()),
+    llmModelEnc: v.optional(v.string()),
+    openclawAppKeyEnc: v.optional(v.string()),
+    allowedSkillsJsonEnc: v.optional(v.string()),
+    flyApiTokenEnc: v.optional(v.string()),
+    llmApiKeyEnc: v.optional(v.string()),
+    openaiApiKeyEnc: v.optional(v.string()),
+    openclawGatewayTokenEnc: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_tenantId", ["tenantId"]),
 });
